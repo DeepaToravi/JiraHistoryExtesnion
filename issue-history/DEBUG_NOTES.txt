@@ -1,0 +1,12 @@
+// DEBUGGING: Verify resolver is working
+// Run this in browser console to test:
+// invoke('fetchHistory').then(d => console.log('History:', d)).catch(e => console.error('Error:', e))
+
+// The panel should show up in the right sidebar with title "issue-history"
+// If you don't see it, it could be due to:
+// 1. Browser cache issues - clear with Ctrl+Shift+R
+// 2. App not found in sidebar - may be below other panels or hidden
+// 3. Permission issues - check app permissions
+// 4. Console errors - check F12 developer tools
+
+// LOCATION: Right side of issue details (where other panels like "Details" show)
