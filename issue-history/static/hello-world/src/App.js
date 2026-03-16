@@ -545,6 +545,97 @@ function IssueActivityApp() {
   );
 }
 
+// ── Key multi-select filter ────────────────────────────────────────────────
+function KeyFilter({ allRows, selected, onChange }) {
+  const [open,    setOpen]    = React.useState(false);
+  const [draft,   setDraft]   = React.useState(selected); // working copy until Apply
+  const [search,  setSearch]  = React.useState("");
+  const ref = React.useRef(null);
+
+  // Sync draft when external selected changes (e.g. clear all)
+  React.useEffect(() => { setDraft(selected); }, [selected]);
+
+  React.useEffect(() => {
+    const h = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
+
+  // Build {key -> count} from ALL rows (unfiltered)
+  const keyCounts = React.useMemo(() => {
+    const m = {};
+    allRows.forEach(r => { m[r.issueKey] = (m[r.issueKey] || 0) + 1; });
+    return m;
+  }, [allRows]);
+
+  const sortedKeys = React.useMemo(() =>
+    Object.keys(keyCounts).sort((a, b) => (keyCounts[b] - keyCounts[a]) || a.localeCompare(b))
+  , [keyCounts]);
+
+  const filtered = search.trim()
+    ? sortedKeys.filter(k => k.toLowerCase().includes(search.toLowerCase()))
+    : sortedKeys;
+
+  const allSelected = draft.length === 0; // empty = "any work item"
+
+  function toggle(key) {
+    setDraft(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
+  }
+
+  function toggleAll() { setDraft([]); }
+
+  const active = selected.length > 0;
+
+  return (
+    <span className={`fh-wrap${active ? " fh-on" : ""}`} ref={ref}>
+      <button
+        className={`fh-btn${active ? " fh-active" : ""}`}
+        title={active ? `Filtering: ${selected.join(", ")}` : "Filter by work item key"}
+        onClick={e => { e.stopPropagation(); setDraft(selected); setSearch(""); setOpen(v => !v); }}>
+        &#9783;
+      </button>
+      {active && (
+        <button className="fh-clear" title="Clear key filter"
+          onClick={e => { e.stopPropagation(); onChange([]); }}>&#10005;</button>
+      )}
+      {open && (
+        <div className="kf-panel" onClick={e => e.stopPropagation()}>
+          <div className="kf-search-row">
+            <input
+              className="kf-search"
+              placeholder="Find work item key"
+              value={search}
+              autoFocus
+              onChange={e => setSearch(e.target.value)} />
+            <span className="kf-search-ico">&#128269;</span>
+          </div>
+          <ul className="kf-list">
+            <li className={`kf-item${allSelected ? " kf-checked" : ""}`}
+              onClick={toggleAll}>
+              <span className={`kf-cb${allSelected ? " on" : ""}`}>{allSelected ? "\u2714" : ""}</span>
+              <span className="kf-lbl">Any work item</span>
+            </li>
+            {filtered.map(k => {
+              const checked = draft.includes(k);
+              return (
+                <li key={k} className={`kf-item${checked ? " kf-checked" : ""}`} onClick={() => toggle(k)}>
+                  <span className={`kf-cb${checked ? " on" : ""}`}>{checked ? "\u2714" : ""}</span>
+                  <span className="kf-lbl">{k}</span>
+                  <span className="kf-count">{keyCounts[k]}</span>
+                </li>
+              );
+            })}
+          </ul>
+          <div className="kf-footer">
+            <button className="kf-cancel" onClick={() => { setDraft(selected); setOpen(false); }}>Cancel</button>
+            <button className="kf-apply" onClick={() => { onChange(draft); setOpen(false); }}>Apply</button>
+          </div>
+        </div>
+      )}
+    </span>
+  );
+}
+
 // ── Project-level Activity Page ────────────────────────────────────────────
 function ProjectActivityApp() {
   const [allRows,     setAllRows]     = React.useState([]);
@@ -555,6 +646,7 @@ function ProjectActivityApp() {
   const [daysInput,   setDaysInput]   = React.useState("8");
   const [days,        setDays]        = React.useState(8);
   const [userF,  setUserF]  = React.useState("any");
+  const [keyF,   setKeyF]   = React.useState([]);   // [] = any
   const [fieldF, setFieldF] = React.useState("any");
   const [search, setSearch] = React.useState("");
   const [asc,    setAsc]    = React.useState(false);
@@ -623,14 +715,15 @@ function ProjectActivityApp() {
 
   const rows = React.useMemo(() => {
     let r = allRows;
-    if (userF  !== "any") r = r.filter(x => x.author === userF);
-    if (fieldF !== "any") r = r.filter(x => x.field  === fieldF);
+    if (userF  !== "any")  r = r.filter(x => x.author === userF);
+    if (keyF.length > 0)   r = r.filter(x => keyF.includes(x.issueKey));
+    if (fieldF !== "any")  r = r.filter(x => x.field  === fieldF);
     if (search.trim()) {
       const q = search.toLowerCase();
       r = r.filter(x => (x.author + x.issueKey + x.summary + x.field + x.from + x.to).toLowerCase().includes(q));
     }
     return [...r].sort((a, b) => { const d = new Date(b.timestamp) - new Date(a.timestamp); return asc ? -d : d; });
-  }, [allRows, userF, fieldF, search, asc]);
+  }, [allRows, userF, keyF, fieldF, search, asc]);
 
   const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
   const pagedRows  = rows.slice((page - 1) * pageSize, page * pageSize);
@@ -729,7 +822,10 @@ function ProjectActivityApp() {
                 <th className="th-sort" onClick={() => { setAsc(v => !v); setPage(1); }}>
                   Date of change <span className="sort-ico">{asc ? "▲" : "▼"}</span>
                 </th>
-                <th>Key</th>
+                <th className="th-field-col">Key
+                  <KeyFilter allRows={allRows} selected={keyF}
+                    onChange={v => { setKeyF(v); setPage(1); }} />
+                </th>
                 <th>Summary</th>
                 <th>Updater</th>
                 <th className="th-field-col">Field
