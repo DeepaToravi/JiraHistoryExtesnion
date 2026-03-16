@@ -214,6 +214,39 @@ function DateFilter({ opts, val, label, onChange, customStart, customEnd, onCust
   );
 }
 
+function FieldHeaderFilter({ opts, val, onChange }) {
+  const [open, setOpen] = React.useState(false);
+  const ref = React.useRef(null);
+  React.useEffect(() => {
+    const h = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
+  const active = val !== "any";
+  return (
+    <span className={`fh-wrap${active ? " fh-on" : ""}`} ref={ref}>
+      <button className={`fh-btn${active ? " fh-active" : ""}`}
+        onClick={e => { e.stopPropagation(); setOpen(v => !v); }}
+        title={active ? `Filtering: ${val}` : "Filter by field"}>&#9783;</button>
+      {active && (
+        <button className="fh-clear"
+          onClick={e => { e.stopPropagation(); onChange("any"); }}
+          title="Clear field filter">&#10005;</button>
+      )}
+      {open && (
+        <ul className="fh-list">
+          {opts.map(o => (
+            <li key={o.value} className={o.value === val ? "dd-active" : ""}
+              onClick={e => { e.stopPropagation(); onChange(o.value); setOpen(false); }}>
+              {o.label}
+            </li>
+          ))}
+        </ul>
+      )}
+    </span>
+  );
+}
+
 function DDMenu({ label, opts, val, onChange, alignRight }) {
   const [open, setOpen] = React.useState(false);
   const ref = React.useRef(null);
@@ -359,6 +392,7 @@ function App() {
             <button className={`vt-btn${viewMode === "stream" ? " on" : ""}`} onClick={() => setViewMode("stream")} title="Activity stream">&#931;&#931;</button>
           </div>
           {!loading && <span className="cnt">{rows.length} change{rows.length !== 1 ? "s" : ""}</span>}
+          {!loading && hasFilter && <button className="clr-btn" onClick={clearAll}>&#10005; Clear</button>}
           <button className="icon-btn" onClick={load} disabled={loading} title="Refresh">
             <span className={loading ? "spin-ico" : ""}>&#8635;</span>
           </button>
@@ -397,13 +431,6 @@ function App() {
         </div>
       </div>
 
-      {!loading && fieldOpts.length > 2 && (
-        <div className="wih-filter-row">
-          <DDMenu label="Field: " opts={fieldOpts} val={fieldF} onChange={setFieldF} />
-          {hasFilter && <button className="clr-btn" onClick={clearAll}>&#10005; Clear filters</button>}
-        </div>
-      )}
-
       {loading && (
         <div className="state-box">
           <div className="spinner"></div>
@@ -437,7 +464,7 @@ function App() {
                   Date of change <span className="sort-ico">{asc ? "&#9650;" : "&#9660;"}</span>
                 </th>
                 <th>Updater</th>
-                <th>Field</th>
+                <th className="th-field-col">Field <FieldHeaderFilter opts={fieldOpts} val={fieldF} onChange={v => { setFieldF(v); setPage(1); }} /></th>
                 <th>Changes</th>
               </tr>
             </thead>
@@ -457,6 +484,14 @@ function App() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {!loading && !error && fieldF !== "any" && viewMode === "stream" && (
+        <div className="wih-filter-row">
+          <span className="field-chip">Field: <strong>{fieldF}</strong>
+            <button className="field-chip-x" onClick={() => setFieldF("any")} title="Remove">&#10005;</button>
+          </span>
         </div>
       )}
 
