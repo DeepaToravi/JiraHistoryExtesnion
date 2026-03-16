@@ -52,14 +52,17 @@ function matchDate(ts, f, customStart, customEnd) {
 function flatten(history) {
   const rows = [];
   (history || []).forEach(h => {
+    const author = h.author || "";
+    // Skip system-generated entries
+    if (!author || author.toLowerCase() === "system") return;
     const items = h.items || [];
     if (!items.length) {
-      rows.push({ ts: h.timestamp, author: h.author || "System", field: "", from: "", to: "", type: h.type });
+      rows.push({ ts: h.timestamp, author, field: "", from: "", to: "", type: h.type });
     } else {
       items.forEach(it => {
         const fromVal = (it.fromString !== undefined && it.fromString !== null) ? it.fromString : (it.from || "");
         const toVal   = (typeof it["toString"] === "string")                   ? it["toString"] : (it.to || "");
-        rows.push({ ts: h.timestamp, author: h.author || "System", field: it.field || "", from: fromVal, to: toVal, type: h.type });
+        rows.push({ ts: h.timestamp, author, field: it.field || "", from: fromVal, to: toVal, type: h.type });
       });
     }
   });
@@ -94,11 +97,13 @@ function Av({ name }) {
   );
 }
 
-function Val({ v, field }) {
-  if (!v && v !== 0) return <em className="nil">None</em>;
+function Val({ v, field, role }) {
+  if (!v && v !== 0) return role === "from" ? <span className="cv-old">Unassigned</span> : <em className="nil">None</em>;
   if (field && /status/i.test(field)) {
     return <span className="status-badge" style={{ background: statusColor(v) }}>{v.toUpperCase()}</span>;
   }
+  if (role === "from") return <span className="cv-old">{v}</span>;
+  if (role === "to")   return <span className="cv-new">{v}</span>;
   return <span className="change-val">{v}</span>;
 }
 
@@ -106,9 +111,9 @@ function Changes({ from, to, field }) {
   const hf = from !== null && from !== undefined && from !== "";
   const ht = to   !== null && to   !== undefined && to   !== "";
   if (!hf && !ht) return <em className="nil">&#8212;</em>;
-  if (!hf) return <Val v={to} field={field} />;
-  if (!ht) return <span className="ch-row"><Val v={from} field={field} /><span className="arr"> &#8594; </span><em className="nil">None</em></span>;
-  return <span className="ch-row"><Val v={from} field={field} /><span className="arr"> &#8594; </span><Val v={to} field={field} /></span>;
+  if (!hf) return <Val v={to} field={field} role="to" />;
+  if (!ht) return <span className="ch-row"><Val v={from} field={field} role="from" /><span className="arr"> &#8594; </span><em className="nil">None</em></span>;
+  return <span className="ch-row"><Val v={from} field={field} role="from" /><span className="arr"> &#8594; </span><Val v={to} field={field} role="to" /></span>;
 }
 
 function dlBlob(name, mime, content) {
@@ -254,6 +259,11 @@ function App() {
   const [asc,      setAsc]      = React.useState(false);
   const [viewMode, setViewMode] = React.useState("table");
 
+  const [page,      setPage]      = React.useState(1);
+  const [pageSize,  setPageSize]  = React.useState(25);
+  const loadedAt = React.useRef(null);
+  const [lastUpdated, setLastUpdated] = React.useState("");
+
   const [exportOpen, setExportOpen] = React.useState(false);
   const exportRef = React.useRef(null);
 
@@ -274,6 +284,8 @@ function App() {
         setError(res.error);
       } else {
         setAllRows(flatten(res && res.history ? res.history : []));
+        loadedAt.current = Date.now();
+        setPage(1);
       }
     } catch (e) {
       setError(e.message || "Failed to load history");
@@ -307,7 +319,25 @@ function App() {
   }, [allRows, dateF, customStart, customEnd, userF, fieldF, search, asc]);
 
   const hasFilter = dateF !== "any" || userF !== "any" || fieldF !== "any" || search;
-  const clearAll  = () => { setDateF("any"); setCustomStart(""); setCustomEnd(""); setUserF("any"); setFieldF("any"); setSearch(""); };
+  const clearAll  = () => { setDateF("any"); setCustomStart(""); setCustomEnd(""); setUserF("any"); setFieldF("any"); setSearch(""); setPage(1); };
+
+  // "Last updated" ticker
+  React.useEffect(() => {
+    function tick() {
+      if (!loadedAt.current) { setLastUpdated(""); return; }
+      const s = Math.floor((Date.now() - loadedAt.current) / 1000);
+      if (s < 60)       setLastUpdated(`${s} second${s !== 1 ? "s" : ""} ago`);
+      else if (s < 3600) { const m = Math.floor(s / 60); setLastUpdated(`${m} minute${m !== 1 ? "s" : ""} ago`); }
+      else               { const h = Math.floor(s / 3600); setLastUpdated(`${h} hour${h !== 1 ? "s" : ""} ago`); }
+    }
+    tick();
+    const id = setInterval(tick, 10000);
+    return () => clearInterval(id);
+  }, [allRows]);
+
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  const pagedRows  = rows.slice((page - 1) * pageSize, page * pageSize);
+  const PAGE_SIZE_OPTS = [{ value: 10, label: "10" }, { value: 25, label: "25" }, { value: 50, label: "50" }, { value: 100, label: "100" }];
 
   // label shown on the date button when custom range is active
   const dateBtnLabel = React.useMemo(() => {
@@ -403,7 +433,7 @@ function App() {
           <table className="tbl">
             <thead>
               <tr>
-                <th className="th-sort" onClick={() => setAsc(v => !v)}>
+                <th className="th-sort" onClick={() => { setAsc(v => !v); setPage(1); }}>
                   Date of change <span className="sort-ico">{asc ? "&#9650;" : "&#9660;"}</span>
                 </th>
                 <th>Updater</th>
@@ -412,7 +442,7 @@ function App() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r, i) => (
+              {pagedRows.map((r, i) => (
                 <tr key={i}>
                   <td className="td-date">{fmtDate(r.ts)}</td>
                   <td>
@@ -421,7 +451,7 @@ function App() {
                       <span>{r.author}</span>
                     </div>
                   </td>
-                  <td className="td-field">{r.field || "&#8212;"}</td>
+                  <td className="td-field">{r.field || "\u2014"}</td>
                   <td><Changes from={r.from} to={r.to} field={r.field} /></td>
                 </tr>
               ))}
@@ -432,7 +462,7 @@ function App() {
 
       {!loading && !error && rows.length > 0 && viewMode === "stream" && (
         <div className="stream">
-          {rows.map((r, i) => (
+          {pagedRows.map((r, i) => (
             <div key={i} className="s-row">
               <Av name={r.author} />
               <div className="s-body">
@@ -451,6 +481,29 @@ function App() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {!loading && !error && rows.length > 0 && (
+        <div className="pg-footer">
+          <span className="pg-updated">
+            {lastUpdated ? `Last updated: ${lastUpdated}` : ""}
+          </span>
+          <div className="pg-controls">
+            <span className="pg-label">Logs per page:</span>
+            <DDMenu opts={PAGE_SIZE_OPTS} val={pageSize}
+              onChange={v => { setPageSize(Number(v)); setPage(1); }} alignRight />
+            <button className="pg-nav" disabled={page <= 1}
+              onClick={() => setPage(p => p - 1)}>&#8249;</button>
+            <span className="pg-num">{page}</span>
+            <button className="pg-nav" disabled={page >= totalPages}
+              onClick={() => setPage(p => p + 1)}>&#8250;</button>
+            <input className="pg-jump" type="number" min="1" max={totalPages}
+              placeholder={String(totalPages)}
+              onKeyDown={e => { if (e.key === "Enter") { const v = parseInt(e.target.value); if (v >= 1 && v <= totalPages) { setPage(v); e.target.value = ""; } } }} />
+            <button className="pg-go"
+              onClick={e => { const inp = e.target.previousSibling; const v = parseInt(inp.value); if (v >= 1 && v <= totalPages) { setPage(v); inp.value = ""; } }}>Go&gt;</button>
+          </div>
         </div>
       )}
     </div>
