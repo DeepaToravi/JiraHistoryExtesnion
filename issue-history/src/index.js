@@ -1,23 +1,26 @@
 import Resolver from '@forge/resolver';
 import api, { route } from '@forge/api';
-import { KVS } from '@forge/kvs';
+import { kvs, WhereConditions } from '@forge/kvs';
 import { issueUpdated } from './events';
 
 const resolver = new Resolver();
 
 resolver.define('fetchHistory', async (req) => {
   console.log('=== fetchHistory called ===');
-  console.log('Context:', req.context);
-  
+  console.log('Context:', JSON.stringify(req.context));
+  console.log('Payload:', JSON.stringify(req.payload));
+
   try {
-    // Get issue key from context
-    let issueKey = req.context?.issue?.key;
-    
+    // Try all possible locations for the issue key
+    let issueKey = req.context?.extension?.issue?.key
+      || req.context?.issue?.key
+      || req.payload?.issueKey;
+
     if (!issueKey) {
-      console.error('No issue key found');
-      return { history: [], total: 0, error: 'No issue key' };
+      console.error('No issue key found. Full context:', JSON.stringify(req.context));
+      return { history: [], total: 0, error: 'No issue key found in context or payload' };
     }
-    
+
     console.log(`Issue: ${issueKey}`);
 
     // Fetch Jira history
@@ -36,8 +39,7 @@ resolver.define('fetchHistory', async (req) => {
     // Fetch KVS history
     let kvsHistory = [];
     try {
-      const kvs = new KVS();
-      const result = await kvs.query({ prefix: `history:${issueKey}:` });
+      const result = await kvs.query().where('key', WhereConditions.beginsWith(`history:${issueKey}:`)).getMany();
       kvsHistory = result.results?.map(r => r.value) || [];
       console.log(`KVS history: ${kvsHistory.length} records`);
     } catch (e) {
@@ -67,3 +69,4 @@ resolver.define('fetchHistory', async (req) => {
 
 export const handler = resolver.getDefinitions();
 export { issueUpdated };
+export const issueCreated = async () => {};

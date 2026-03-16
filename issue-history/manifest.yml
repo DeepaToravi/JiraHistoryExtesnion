@@ -1,11 +1,10 @@
 modules:
-  jira:issuePanel:
-    - key: issue-history-panel
+  jira:issueActivity:
+    - key: issue-history-activity
+      title: Work Item History
       resource: main
       resolver:
-        function: resolver
-      title: Work Issue History
-      icon: https://developer.atlassian.com/platform/forge/images/icons/issue-panel-icon.svg
+        function: handler
 
   trigger:
     - key: issue-created-trigger
@@ -18,15 +17,15 @@ modules:
       events:
         - avi:jira:updated:issue
 
-functions:
-  - key: resolver
-    handler: index.handler
+  function:
+    - key: handler
+      handler: index.handler
 
-  - key: issueCreated
-    handler: index.issueCreated
+    - key: issueCreated
+      handler: index.issueCreated
 
-  - key: issueUpdated
-    handler: index.issueUpdated
+    - key: issueUpdated
+      handler: index.issueUpdated
 
 resources:
   - key: main
@@ -35,9 +34,10 @@ resources:
 permissions:
   scopes:
     - read:jira-work
+    - read:jira-user
     - storage:app
 
 app:
+  id: ari:cloud:ecosystem::app/69b57f70-19ee-4775-823c-244634d3bfad
   runtime:
     name: nodejs24.x
-  id: ari:cloud:ecosystem::app/69b57f70-19ee-4775-823c-244634d3bfad

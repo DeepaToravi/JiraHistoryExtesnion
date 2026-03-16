@@ -1,10 +1,9 @@
-import { KVS } from '@forge/kvs';
+import { kvs } from '@forge/kvs';
 
 async function issueUpdated(event) {
   console.log('=== Issue Updated Event ===');
   console.log('Event:', event);
   
-  const kvs = new KVS();
 
   const record = {
     issueKey: event.issue.key,
