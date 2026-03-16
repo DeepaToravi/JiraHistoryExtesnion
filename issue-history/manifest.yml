@@ -6,6 +6,13 @@ modules:
       resolver:
         function: handler
 
+  jira:projectPage:
+    - key: issue-history-project-page
+      title: Activities (by Issue History)
+      resource: main
+      resolver:
+        function: handler
+
   trigger:
     - key: issue-created-trigger
       function: issueCreated

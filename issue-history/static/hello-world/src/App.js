@@ -277,7 +277,7 @@ function DDMenu({ label, opts, val, onChange, alignRight }) {
   );
 }
 
-function App() {
+function IssueActivityApp() {
   const [allRows, setAllRows]   = React.useState([]);
   const [loading, setLoading]   = React.useState(true);
   const [error,   setError]     = React.useState(null);
@@ -461,7 +461,7 @@ function App() {
             <thead>
               <tr>
                 <th className="th-sort" onClick={() => { setAsc(v => !v); setPage(1); }}>
-                  Date of change <span className="sort-ico">{asc ? "&#9650;" : "&#9660;"}</span>
+                  Date of change <span className="sort-ico">{asc ? "▲" : "▼"}</span>
                 </th>
                 <th>Updater</th>
                 <th className="th-field-col">Field <FieldHeaderFilter opts={fieldOpts} val={fieldF} onChange={v => { setFieldF(v); setPage(1); }} /></th>
@@ -543,6 +543,265 @@ function App() {
       )}
     </div>
   );
+}
+
+// ── Project-level Activity Page ────────────────────────────────────────────
+function ProjectActivityApp() {
+  const [allRows,     setAllRows]     = React.useState([]);
+  const [loading,     setLoading]     = React.useState(true);
+  const [error,       setError]       = React.useState(null);
+  const [projectKey,  setProjectKey]  = React.useState("");
+  const [projectName, setProjectName] = React.useState("");
+  const [daysInput,   setDaysInput]   = React.useState("8");
+  const [days,        setDays]        = React.useState(8);
+  const [userF,  setUserF]  = React.useState("any");
+  const [fieldF, setFieldF] = React.useState("any");
+  const [search, setSearch] = React.useState("");
+  const [asc,    setAsc]    = React.useState(false);
+  const [page,     setPage]     = React.useState(1);
+  const [pageSize, setPageSize] = React.useState(100);
+  const loadedAt = React.useRef(null);
+  const [lastUpdated, setLastUpdated] = React.useState("");
+  const [exportOpen, setExportOpen] = React.useState(false);
+  const exportRef = React.useRef(null);
+  const ctxRef    = React.useRef(null);
+
+  React.useEffect(() => {
+    const h = e => { if (exportRef.current && !exportRef.current.contains(e.target)) setExportOpen(false); };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
+
+  const loadData = React.useCallback(async (daysVal) => {
+    try {
+      setLoading(true); setError(null);
+      if (!ctxRef.current) ctxRef.current = await forgeView.getContext();
+      const ctx = ctxRef.current;
+      const pkey = ctx?.extension?.project?.key;
+      const pname = ctx?.extension?.project?.name || pkey;
+      if (pkey) { setProjectKey(pkey); setProjectName(pname); }
+      const res = await invoke("fetchProjectHistory", { projectKey: pkey, days: daysVal });
+      if (res && res.error && !(res.history || []).length) {
+        setError(res.error);
+      } else {
+        setAllRows(res?.history || []);
+        loadedAt.current = Date.now();
+        setPage(1);
+      }
+    } catch (e) {
+      setError(e.message || "Failed to load project history");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => { loadData(8); }, [loadData]);
+
+  React.useEffect(() => {
+    function tick() {
+      if (!loadedAt.current) { setLastUpdated(""); return; }
+      const s = Math.floor((Date.now() - loadedAt.current) / 1000);
+      if (s < 5)       setLastUpdated("now");
+      else if (s < 60) setLastUpdated(`${s} seconds ago`);
+      else if (s < 3600) { const m = Math.floor(s / 60); setLastUpdated(`${m} minute${m !== 1 ? "s" : ""} ago`); }
+      else { const hr = Math.floor(s / 3600); setLastUpdated(`${hr} hour${hr !== 1 ? "s" : ""} ago`); }
+    }
+    tick();
+    const id = setInterval(tick, 5000);
+    return () => clearInterval(id);
+  }, [allRows]);
+
+  const userOpts = React.useMemo(() => {
+    const s = new Set(allRows.map(r => r.author).filter(Boolean));
+    return [{ value: "any", label: "Any User" }, ...Array.from(s).sort().map(a => ({ value: a, label: a }))];
+  }, [allRows]);
+
+  const fieldOpts = React.useMemo(() => {
+    const s = new Set(allRows.map(r => r.field).filter(Boolean));
+    return [{ value: "any", label: "All Fields" }, ...Array.from(s).sort().map(f => ({ value: f, label: f }))];
+  }, [allRows]);
+
+  const rows = React.useMemo(() => {
+    let r = allRows;
+    if (userF  !== "any") r = r.filter(x => x.author === userF);
+    if (fieldF !== "any") r = r.filter(x => x.field  === fieldF);
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      r = r.filter(x => (x.author + x.issueKey + x.summary + x.field + x.from + x.to).toLowerCase().includes(q));
+    }
+    return [...r].sort((a, b) => { const d = new Date(b.timestamp) - new Date(a.timestamp); return asc ? -d : d; });
+  }, [allRows, userF, fieldF, search, asc]);
+
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  const pagedRows  = rows.slice((page - 1) * pageSize, page * pageSize);
+  const PAGE_SIZE_OPTS = [{ value: 25, label: "25" }, { value: 50, label: "50" }, { value: 100, label: "100" }];
+
+  function applyDays() {
+    const v = parseInt(daysInput);
+    if (!isNaN(v) && v > 0) { setDays(v); loadData(v); }
+    else setDaysInput(String(days));
+  }
+
+  function doExportCSV() {
+    const h = ["Date", "Key", "Summary", "Author", "Field", "From", "To"];
+    const q = v => `"${String(v || "").replace(/"/g, '""')}"`;
+    const csv = [h, ...rows.map(r => [fmtDate(r.timestamp), r.issueKey, r.summary, r.author, r.field, r.from, r.to])]
+      .map(row => row.map(q).join(",")).join("\r\n");
+    dlBlob(`${projectKey || "project"}-history.csv`, "text/csv;charset=utf-8;", "\uFEFF" + csv);
+  }
+  function doExportXLS() {
+    const h = ["Date", "Key", "Summary", "Author", "Field", "From", "To"];
+    const x = v => String(v || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const html = `<html><head><meta charset="UTF-8"></head><body><table border="1"><thead><tr>${h.map(c => `<th>${c}</th>`).join("")}</tr></thead><tbody>${rows.map(r => `<tr>${[fmtDate(r.timestamp), r.issueKey, r.summary, r.author, r.field, r.from, r.to].map(v => `<td>${x(v)}</td>`).join("")}</tr>`).join("")}</tbody></table></body></html>`;
+    dlBlob(`${projectKey || "project"}-history.xls`, "application/vnd.ms-excel", html);
+  }
+
+  return (
+    <div className="wih proj-page">
+      <h2 className="proj-title">
+        User activities for space &ldquo;{projectName || projectKey}{projectKey ? ` (${projectKey})` : ""}&rdquo;
+      </h2>
+
+      <div className="proj-bar">
+        <div className="proj-bar-l">
+          {!loading && <span className="cnt">{rows.length} change{rows.length !== 1 ? "s" : ""}</span>}
+          <button className="icon-btn" onClick={() => loadData(days)} disabled={loading} title="Refresh">
+            <span className={loading ? "spin-ico" : ""}>&#8635;</span>
+          </button>
+          <DDMenu label="Updated by: " opts={userOpts} val={userF}
+            onChange={v => { setUserF(v); setPage(1); }} />
+          <span className="days-wrap">
+            Within the last:
+            <input className="days-inp" type="number" min="1" max="365"
+              value={daysInput}
+              onChange={e => setDaysInput(e.target.value)}
+              onBlur={applyDays}
+              onKeyDown={e => { if (e.key === "Enter") applyDays(); }} />
+            days
+          </span>
+        </div>
+        <div className="proj-bar-r">
+          <div className="srch">
+            <span className="srch-ico">&#128269;</span>
+            <input className="srch-inp" placeholder="Search..." value={search}
+              onChange={e => { setSearch(e.target.value); setPage(1); }} />
+          </div>
+          <div className="dd-wrap" ref={exportRef}>
+            <button className="icon-btn" title="Export" onClick={() => setExportOpen(v => !v)}>
+              &#11015; Export &#9660;
+            </button>
+            {exportOpen && (
+              <ul className="dd-list align-r">
+                <li onClick={() => { doExportXLS(); setExportOpen(false); }}>&#128202; Excel</li>
+                <li onClick={() => { doExportCSV(); setExportOpen(false); }}>&#128196; CSV</li>
+              </ul>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {loading && (
+        <div className="state-box">
+          <div className="spinner"></div>
+          <p>Loading project activities...</p>
+        </div>
+      )}
+      {!loading && error && (
+        <div className="err-box">
+          <strong>Error loading activities</strong>
+          <p>{error}</p>
+          <button className="prim-btn" onClick={() => loadData(days)}>Retry</button>
+        </div>
+      )}
+      {!loading && !error && rows.length === 0 && (
+        <div className="state-box">
+          <div className="empty-ico">&#128203;</div>
+          <p className="empty-title">No activities found</p>
+          <p className="empty-sub">Try increasing the days range or changing filters.</p>
+        </div>
+      )}
+
+      {!loading && !error && rows.length > 0 && (
+        <div className="tbl-wrap">
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th className="th-sort" onClick={() => { setAsc(v => !v); setPage(1); }}>
+                  Date of change <span className="sort-ico">{asc ? "▲" : "▼"}</span>
+                </th>
+                <th>Key</th>
+                <th>Summary</th>
+                <th>Updater</th>
+                <th className="th-field-col">Field
+                  <FieldHeaderFilter opts={fieldOpts} val={fieldF}
+                    onChange={v => { setFieldF(v); setPage(1); }} />
+                </th>
+                <th>Changes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pagedRows.map((r, i) => (
+                <tr key={i}>
+                  <td className="td-date">{fmtDate(r.timestamp)}</td>
+                  <td>
+                    <a className="key-link"
+                      href={`/browse/${r.issueKey}`}
+                      target="_blank" rel="noreferrer">{r.issueKey}</a>
+                  </td>
+                  <td className="td-summary">{r.summary}</td>
+                  <td>
+                    <div className="user-cell">
+                      <Av name={r.author} />
+                      <span>{r.author}</span>
+                    </div>
+                  </td>
+                  <td className="td-field">{r.field || "—"}</td>
+                  <td><Changes from={r.from} to={r.to} field={r.field} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {!loading && !error && rows.length > 0 && (
+        <div className="pg-footer">
+          <span className="pg-updated">{lastUpdated ? `Last updated: ${lastUpdated}` : ""}</span>
+          <div className="pg-controls">
+            <span className="pg-label">Logs per page:</span>
+            <DDMenu opts={PAGE_SIZE_OPTS} val={pageSize}
+              onChange={v => { setPageSize(Number(v)); setPage(1); }} alignRight />
+            <button className="pg-nav" disabled={page <= 1} onClick={() => setPage(p => p - 1)}>&#8249;</button>
+            <span className="pg-num">{page}</span>
+            <button className="pg-nav" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}>&#8250;</button>
+            <input className="pg-jump" type="number" min="1" max={totalPages} placeholder={String(totalPages)}
+              onKeyDown={e => { if (e.key === "Enter") { const v = parseInt(e.target.value); if (v >= 1 && v <= totalPages) { setPage(v); e.target.value = ""; } } }} />
+            <button className="pg-go"
+              onClick={e => { const inp = e.target.previousSibling; const v = parseInt(inp.value); if (v >= 1 && v <= totalPages) { setPage(v); inp.value = ""; } }}>Go&gt;</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Context switcher (root component) ───────────────────────────────────────
+function App() {
+  const [mode, setMode] = React.useState(null);
+  React.useEffect(() => {
+    forgeView.getContext()
+      .then(ctx => {
+        if (ctx && ctx.extension && ctx.extension.project && !ctx.extension.issue) {
+          setMode("project");
+        } else {
+          setMode("issue");
+        }
+      })
+      .catch(() => setMode("issue"));
+  }, []);
+  if (mode === "project") return <ProjectActivityApp />;
+  if (mode === "issue")   return <IssueActivityApp />;
+  return <div className="wih"><div className="state-box"><div className="spinner"></div></div></div>;
 }
 
 export default App;

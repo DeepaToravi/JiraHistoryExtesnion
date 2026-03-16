@@ -113,3 +113,14 @@
 .field-chip{display:inline-flex;align-items:center;gap:6px;background:#DEEBFF;border:1px solid #B3D4FF;color:#0052CC;border-radius:3px;padding:3px 10px;font-size:12px}
 .field-chip-x{background:none;border:none;cursor:pointer;color:#0052CC;font-size:11px;padding:0;line-height:1}
 .field-chip-x:hover{color:#0747A6}
+/* Project activity page */
+.proj-page{padding:16px 20px}
+.proj-title{font-size:18px;font-weight:600;color:#172B4D;margin-bottom:14px}
+.proj-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+.proj-bar-l,.proj-bar-r{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.days-wrap{display:flex;align-items:center;gap:6px;font-size:13px;color:#42526E;white-space:nowrap}
+.days-inp{width:52px;border:1px solid #DFE1E6;border-radius:3px;padding:4px 8px;font-size:13px;text-align:center;outline:none;color:#172B4D}
+.days-inp:focus{border-color:#0052CC;box-shadow:0 0 0 2px rgba(0,82,204,.2)}
+.key-link{color:#0052CC;font-weight:600;font-size:13px;text-decoration:none;white-space:nowrap}
+.key-link:hover{text-decoration:underline}
+.td-summary{color:#172B4D;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
