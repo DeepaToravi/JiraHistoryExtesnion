@@ -12,6 +12,7 @@ const DATE_OPTS = [
   { value: "last_28",    label: "Last 28 days" },
   { value: "this_month", label: "This Month" },
   { value: "prev_month", label: "Previous Month" },
+  { value: "custom",     label: "Custom range..." },
 ];
 
 function fmtDate(ts) {
@@ -23,7 +24,7 @@ function fmtDate(ts) {
   } catch (_) { return ts || ""; }
 }
 
-function matchDate(ts, f) {
+function matchDate(ts, f, customStart, customEnd) {
   if (f === "any") return true;
   const d = new Date(ts), now = new Date();
   const sod = x => { const c = new Date(x); c.setHours(0, 0, 0, 0); return c; };
@@ -38,6 +39,13 @@ function matchDate(ts, f) {
   if (f === "last_28")    { const c = new Date(now); c.setDate(c.getDate() - 28); return d >= c; }
   if (f === "this_month") return d >= som(now);
   if (f === "prev_month") { const tm = som(now); const pm = new Date(tm); pm.setMonth(pm.getMonth() - 1); return d >= pm && d < tm; }
+  if (f === "custom") {
+    const start = customStart ? sod(new Date(customStart)) : null;
+    const end   = customEnd   ? (() => { const e = new Date(customEnd); e.setHours(23, 59, 59, 999); return e; })() : null;
+    if (start && d < start) return false;
+    if (end   && d > end)   return false;
+    return true;
+  }
   return true;
 }
 
@@ -154,6 +162,53 @@ ${rows.map(r => `<tr>${[fmtDate(r.ts), r.author, r.field, r.from, r.to].map(v =>
   else { dlBlob(`${key || "history"}-print.html`, "text/html", html); }
 }
 
+function DateFilter({ opts, val, label, onChange, customStart, customEnd, onCustomStart, onCustomEnd }) {
+  const [open, setOpen] = React.useState(false);
+  const ref = React.useRef(null);
+  React.useEffect(() => {
+    const h = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
+  return (
+    <div className="dd-wrap" ref={ref}>
+      <button className="dd-btn" onClick={() => setOpen(v => !v)}>
+        <span className="dd-prefix">Date: </span>
+        <span>{label}</span>
+        <span className="dd-arrow">&#9660;</span>
+      </button>
+      {open && (
+        <div className="dd-list cdr-panel">
+          {opts.map(o => (
+            <div key={o.value}
+              className={"dd-list-item" + (o.value === val ? " dd-active" : "") + (o.value === "custom" ? " dd-custom-trigger" : "")}
+              onClick={() => { onChange(o.value); if (o.value !== "custom") setOpen(false); }}>
+              {o.label}
+            </div>
+          ))}
+          {val === "custom" && (
+            <div className="cdr-inputs" onClick={e => e.stopPropagation()}>
+              <div className="cdr-row">
+                <label className="cdr-lbl">From</label>
+                <input type="date" className="cdr-date" value={customStart}
+                  max={customEnd || undefined}
+                  onChange={e => onCustomStart(e.target.value)} />
+              </div>
+              <div className="cdr-row">
+                <label className="cdr-lbl">To</label>
+                <input type="date" className="cdr-date" value={customEnd}
+                  min={customStart || undefined}
+                  onChange={e => onCustomEnd(e.target.value)} />
+              </div>
+              <button className="prim-btn cdr-apply" onClick={() => setOpen(false)}>Apply</button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DDMenu({ label, opts, val, onChange, alignRight }) {
   const [open, setOpen] = React.useState(false);
   const ref = React.useRef(null);
@@ -190,7 +245,9 @@ function App() {
   const [error,   setError]     = React.useState(null);
   const [issueKey, setIssueKey] = React.useState(null);
 
-  const [dateF,    setDateF]    = React.useState("any");
+  const [dateF,       setDateF]       = React.useState("any");
+  const [customStart, setCustomStart] = React.useState("");
+  const [customEnd,   setCustomEnd]   = React.useState("");
   const [userF,    setUserF]    = React.useState("any");
   const [fieldF,   setFieldF]   = React.useState("any");
   const [search,   setSearch]   = React.useState("");
@@ -239,7 +296,7 @@ function App() {
 
   const rows = React.useMemo(() => {
     let r = allRows;
-    if (dateF  !== "any") r = r.filter(x => matchDate(x.ts, dateF));
+    if (dateF  !== "any") r = r.filter(x => matchDate(x.ts, dateF, customStart, customEnd));
     if (userF  !== "any") r = r.filter(x => x.author === userF);
     if (fieldF !== "any") r = r.filter(x => x.field  === fieldF);
     if (search.trim()) {
@@ -247,10 +304,20 @@ function App() {
       r = r.filter(x => (x.author + x.field + x.from + x.to).toLowerCase().includes(q));
     }
     return [...r].sort((a, b) => { const d = new Date(b.ts) - new Date(a.ts); return asc ? -d : d; });
-  }, [allRows, dateF, userF, fieldF, search, asc]);
+  }, [allRows, dateF, customStart, customEnd, userF, fieldF, search, asc]);
 
   const hasFilter = dateF !== "any" || userF !== "any" || fieldF !== "any" || search;
-  const clearAll  = () => { setDateF("any"); setUserF("any"); setFieldF("any"); setSearch(""); };
+  const clearAll  = () => { setDateF("any"); setCustomStart(""); setCustomEnd(""); setUserF("any"); setFieldF("any"); setSearch(""); };
+
+  // label shown on the date button when custom range is active
+  const dateBtnLabel = React.useMemo(() => {
+    if (dateF !== "custom") return DATE_OPTS.find(o => o.value === dateF)?.label || "Any dates";
+    const fmt = v => v ? new Date(v).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : "";
+    if (customStart && customEnd) return `${fmt(customStart)} – ${fmt(customEnd)}`;
+    if (customStart) return `From ${fmt(customStart)}`;
+    if (customEnd)   return `Until ${fmt(customEnd)}`;
+    return "Custom range";
+  }, [dateF, customStart, customEnd]);
 
   return (
     <div className="wih">
@@ -268,7 +335,16 @@ function App() {
         </div>
 
         <div className="wih-bar-r">
-          <DDMenu label="Date: " opts={DATE_OPTS}  val={dateF}  onChange={setDateF} />
+          <DateFilter
+            opts={DATE_OPTS}
+            val={dateF}
+            label={dateBtnLabel}
+            onChange={v => { setDateF(v); if (v !== "custom") { setCustomStart(""); setCustomEnd(""); } }}
+            customStart={customStart}
+            customEnd={customEnd}
+            onCustomStart={setCustomStart}
+            onCustomEnd={setCustomEnd}
+          />
           <DDMenu label="Updated by: " opts={userOpts} val={userF} onChange={setUserF} />
 
           <div className="srch">

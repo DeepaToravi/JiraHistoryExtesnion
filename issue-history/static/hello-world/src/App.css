@@ -70,3 +70,15 @@
 .s-head em{font-style:normal;font-weight:600;color:#172B4D}
 .s-when{color:#6B778C;font-size:12px}
 .s-change{margin-top:4px}
+/* Custom date range panel */
+.cdr-panel{padding:0;min-width:200px}
+.dd-list-item{padding:7px 16px;font-size:13px;cursor:pointer;white-space:nowrap;color:#172B4D}
+.dd-list-item:hover{background:#F4F5F7}
+.dd-list-item.dd-active{color:#0052CC;font-weight:600;background:#DEEBFF}
+.dd-list-item.dd-custom-trigger{border-top:1px solid #DFE1E6;margin-top:4px;padding-top:8px}
+.cdr-inputs{padding:10px 14px 12px;border-top:1px solid #DFE1E6;background:#F8F9FA}
+.cdr-row{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.cdr-lbl{font-size:12px;color:#5E6C84;width:30px;flex-shrink:0}
+.cdr-date{border:1px solid #DFE1E6;border-radius:3px;padding:4px 8px;font-size:12px;color:#172B4D;background:#fff;outline:none;width:100%}
+.cdr-date:focus{border-color:#0052CC;box-shadow:0 0 0 2px rgba(0,82,204,.2)}
+.cdr-apply{width:100%;margin-top:4px;padding:6px;font-size:12px}
