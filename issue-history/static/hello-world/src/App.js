@@ -1,4 +1,5 @@
-﻿import React from "react";
+﻿import AnalyticsDashboard from "./Component/AnalyticsDashboard";
+import React from "react";
 import { invoke, view as forgeView } from "@forge/bridge";
 import "./App.css";
 
@@ -390,6 +391,7 @@ function IssueActivityApp() {
           <div className="vt">
             <button className={`vt-btn${viewMode === "table"  ? " on" : ""}`} onClick={() => setViewMode("table")}  title="Table view">&#9776;</button>
             <button className={`vt-btn${viewMode === "stream" ? " on" : ""}`} onClick={() => setViewMode("stream")} title="Activity stream">&#931;&#931;</button>
+            <button className={`vt-btn${viewMode === "dashboard" ? " on" : ""}`} onClick={() => setViewMode("dashboard")} title="Dashboard view">📊</button>
           </div>
           {!loading && <span className="cnt">{rows.length} change{rows.length !== 1 ? "s" : ""}</span>}
           {!loading && hasFilter && <button className="clr-btn" onClick={clearAll}>&#10005; Clear</button>}
@@ -518,6 +520,9 @@ function IssueActivityApp() {
           ))}
         </div>
       )}
+      {!loading && !error && rows.length > 0 && viewMode === "dashboard" && (
+  <AnalyticsDashboard rows={rows} isProject={false} />
+)}
 
       {!loading && !error && rows.length > 0 && (
         <div className="pg-footer">

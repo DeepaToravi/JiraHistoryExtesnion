@@ -45,6 +45,6 @@ permissions:
     - storage:app
 
 app:
-  id: ari:cloud:ecosystem::app/69b57f70-19ee-4775-823c-244634d3bfad
+  id: ari:cloud:ecosystem::app/3f04a77b-b56f-4958-b226-98e6a5d447eb
   runtime:
     name: nodejs24.x

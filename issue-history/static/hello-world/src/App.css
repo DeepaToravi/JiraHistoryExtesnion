@@ -144,3 +144,75 @@
 .key-link{color:#0052CC;font-weight:600;font-size:13px;text-decoration:none;white-space:nowrap}
 .key-link:hover{text-decoration:underline}
 .td-summary{color:#172B4D;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
+
+/* DASHBOARD STYLES */
+.dash-wrap {
+  border: 1px solid #DFE1E6;
+  border-radius: 4px;
+  padding: 16px;
+}
+
+.dash-cards {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.dash-card {
+  background: #F4F5F7;
+  padding: 12px;
+  border-radius: 4px;
+  min-width: 140px;
+}
+
+.dash-title {
+  font-size: 12px;
+  color: #6B778C;
+}
+
+.dash-value {
+  font-size: 20px;
+  font-weight: bold;
+  color: #172B4D;
+}
+
+.dash-section {
+  margin-top: 12px;
+}
+
+.dash-section h4 {
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+.bar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.bar-label {
+  width: 100px;
+  font-size: 12px;
+  color: #42526E;
+}
+
+.bar {
+  flex: 1;
+  height: 8px;
+  background: #DFE1E6;
+  border-radius: 4px;
+}
+
+.bar-fill {
+  height: 100%;
+  background: #0052CC;
+  border-radius: 4px;
+}
+
+.bar-count {
+  font-size: 12px;
+  color: #172B4D;
+  width: 20px;
+}
