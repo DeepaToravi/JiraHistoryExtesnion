@@ -216,3 +216,10 @@
   color: #172B4D;
   width: 20px;
 }
+.dash-card.blue { background:#DEEBFF; }
+.dash-card.green { background:#E3FCEF; }
+.dash-card.purple { background:#EAE6FF; }
+
+.chart-box {
+  margin-bottom: 20px;
+}

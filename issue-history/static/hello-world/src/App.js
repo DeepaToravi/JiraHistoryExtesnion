@@ -1,4 +1,4 @@
-﻿import AnalyticsDashboard from "./Component/AnalyticsDashboard";
+﻿import AnalyticsDashboard from "./components/AnalyticsDashboard";
 import React from "react";
 import { invoke, view as forgeView } from "@forge/bridge";
 import "./App.css";
