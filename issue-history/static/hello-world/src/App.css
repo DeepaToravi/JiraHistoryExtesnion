@@ -211,6 +211,48 @@
   border-radius: 4px;
 }
 
+/* Orange summary card */
+.dash-card.orange { background:#FFF0B3; }
+
+/* Project top-level tabs */
+.proj-tabs { display:flex; gap:0; border-bottom:2px solid #DFE1E6; margin-bottom:16px; }
+.proj-tab  { background:none; border:none; border-bottom:2px solid transparent; margin-bottom:-2px; padding:8px 18px; font-size:14px; font-weight:500; color:#42526E; cursor:pointer; outline:none; transition:color .15s, border-color .15s; }
+.proj-tab:hover { color:#0052CC; }
+.proj-tab.proj-tab-on { color:#0052CC; border-bottom-color:#0052CC; font-weight:600; }
+
+/* Deleted Issues panel */
+.del-wrap  { padding:0 0 16px; }
+.del-bar   { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px; flex-wrap:wrap; }
+.del-bar-l,.del-bar-r { display:flex; align-items:center; gap:8px; }
+.del-title { font-size:15px; font-weight:600; color:#172B4D; }
+.del-info  { background:#FFFAE6; border:1px solid #FFE380; border-radius:4px; padding:8px 12px; font-size:13px; color:#172B4D; margin-bottom:14px; display:flex; gap:8px; align-items:flex-start; }
+.del-info span { flex-shrink:0; }
+
+/* Deleted issue row */
+.del-row td { vertical-align:middle; }
+.del-key { font-weight:600; color:#DE350B; font-size:13px; }
+.del-badge  { display:inline-block; padding:2px 7px; border-radius:3px; font-size:11px; font-weight:600; }
+.del-type   { background:#DEEBFF; color:#0052CC; }
+.del-status { background:#E3FCEF; color:#006644; }
+.del-pri-high,
+.del-pri-highest   { background:#FFEBE6; color:#BF2600; }
+.del-pri-medium    { background:#FFF0B3; color:#974F0C; }
+.del-pri-low,
+.del-pri-lowest    { background:#E3FCEF; color:#006644; }
+.del-actions       { white-space:nowrap; text-align:center; }
+.del-btn-restore   { background:#0052CC; color:#fff; border:none; border-radius:3px; padding:5px 12px; font-size:12px; cursor:pointer; margin-right:6px; transition:background .15s; }
+.del-btn-restore:hover:not(:disabled)  { background:#0747A6; }
+.del-btn-restore:disabled              { opacity:.5; cursor:not-allowed; }
+.del-btn-purge     { background:#FFEBE6; color:#BF2600; border:1px solid #FF8F73; border-radius:3px; padding:5px 12px; font-size:12px; cursor:pointer; transition:background .15s; }
+.del-btn-purge:hover:not(:disabled)    { background:#FFBDAD; }
+.del-btn-purge:disabled                { opacity:.5; cursor:not-allowed; }
+
+/* Toast notification */
+.del-toast     { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); padding:10px 20px; border-radius:4px; font-size:14px; font-weight:500; z-index:9999; box-shadow:0 4px 12px rgba(0,0,0,.2); animation:toast-in .2s ease; }
+.del-toast-ok  { background:#E3FCEF; color:#006644; border:1px solid #79F2C0; }
+.del-toast-err { background:#FFEBE6; color:#BF2600; border:1px solid #FF8F73; }
+@keyframes toast-in { from{opacity:0;bottom:12px} to{opacity:1;bottom:24px} }
+
 .bar-count {
   font-size: 12px;
   color: #172B4D;

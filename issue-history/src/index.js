@@ -1,7 +1,7 @@
 import Resolver from '@forge/resolver';
 import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
-import { issueUpdated } from './events';
+import { issueUpdated, issueDeleted } from './events';
 
 const resolver = new Resolver();
 
@@ -164,6 +164,82 @@ resolver.define('fetchProjectHistory', async (req) => {
   return { history, total: history.length, projectKey };
 });
 
+// ── Deleted issue resolvers ─────────────────────────────────────────────────
+
+resolver.define('fetchDeletedIssues', async (req) => {
+  const projectKey = req.context?.extension?.project?.key || req.payload?.projectKey;
+  if (!projectKey) return { issues: [], error: 'No project key found' };
+
+  try {
+    const result = await kvs.query()
+      .where('key', WhereConditions.beginsWith(`deleted:${projectKey}:`))
+      .getMany();
+    const issues = (result.results || []).map(r => r.value).filter(Boolean);
+    issues.sort((a, b) => new Date(b.deletedAt) - new Date(a.deletedAt));
+    return { issues, total: issues.length };
+  } catch (e) {
+    console.error('fetchDeletedIssues error:', e);
+    return { issues: [], error: e.message };
+  }
+});
+
+resolver.define('restoreDeletedIssue', async (req) => {
+  const { issueKey } = req.payload || {};
+  if (!issueKey) return { success: false, error: 'No issue key provided' };
+
+  const projectKey = issueKey.split('-')[0];
+  const kvKey = `deleted:${projectKey}:${issueKey}`;
+
+  try {
+    const record = await kvs.get(kvKey);
+    if (!record) return { success: false, error: 'Deleted record not found. It may have already been restored or purged.' };
+
+    const body = {
+      fields: {
+        project:   { key: projectKey },
+        summary:   `[Restored] ${record.summary || issueKey}`,
+        issuetype: { name: record.issueType || 'Task' },
+      },
+    };
+    if (record.priority) body.fields.priority = { name: record.priority };
+    if (record.labels && record.labels.length) body.fields.labels = record.labels;
+
+    const response = await api.asUser().requestJira(route`/rest/api/3/issue`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    const data = await response.json();
+    if (response.status === 201) {
+      await kvs.delete(kvKey);
+      console.log(`✅ Restored ${issueKey} as ${data.key}`);
+      return { success: true, newKey: data.key };
+    }
+    return { success: false, error: JSON.stringify(data.errors || data) };
+  } catch (e) {
+    console.error('restoreDeletedIssue error:', e);
+    return { success: false, error: e.message };
+  }
+});
+
+resolver.define('purgeDeletedIssue', async (req) => {
+  const { issueKey } = req.payload || {};
+  if (!issueKey) return { success: false, error: 'No issue key provided' };
+
+  const projectKey = issueKey.split('-')[0];
+  const kvKey = `deleted:${projectKey}:${issueKey}`;
+
+  try {
+    await kvs.delete(kvKey);
+    console.log(`🗑️ Purged deleted record: ${kvKey}`);
+    return { success: true };
+  } catch (e) {
+    console.error('purgeDeletedIssue error:', e);
+    return { success: false, error: e.message };
+  }
+});
+
 export const handler = resolver.getDefinitions();
-export { issueUpdated };
+export { issueUpdated, issueDeleted };
 export const issueCreated = async () => {};

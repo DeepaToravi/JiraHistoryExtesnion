@@ -24,6 +24,11 @@ modules:
       events:
         - avi:jira:updated:issue
 
+    - key: issue-deleted-trigger
+      function: issueDeleted
+      events:
+        - avi:jira:deleted:issue
+
   function:
     - key: handler
       handler: index.handler
@@ -34,6 +39,9 @@ modules:
     - key: issueUpdated
       handler: index.issueUpdated
 
+    - key: issueDeleted
+      handler: index.issueDeleted
+
 resources:
   - key: main
     path: static/hello-world/build
@@ -41,6 +49,7 @@ resources:
 permissions:
   scopes:
     - read:jira-work
+    - write:jira-work
     - read:jira-user
     - storage:app
 

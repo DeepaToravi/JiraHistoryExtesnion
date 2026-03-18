@@ -1,4 +1,5 @@
 ﻿import AnalyticsDashboard from "./components/AnalyticsDashboard";
+import DeletedIssues from "./components/DeletedIssues";
 import React from "react";
 import { invoke, view as forgeView } from "@forge/bridge";
 import "./App.css";
@@ -657,6 +658,7 @@ function ProjectActivityApp() {
   const [asc,    setAsc]    = React.useState(false);
   const [page,     setPage]     = React.useState(1);
   const [pageSize, setPageSize] = React.useState(100);
+  const [projView, setProjView] = React.useState("activity"); // "activity" | "deleted"
   const loadedAt = React.useRef(null);
   const [lastUpdated, setLastUpdated] = React.useState("");
   const [exportOpen, setExportOpen] = React.useState(false);
@@ -760,6 +762,27 @@ function ProjectActivityApp() {
         User activities for space &ldquo;{projectName || projectKey}{projectKey ? ` (${projectKey})` : ""}&rdquo;
       </h2>
 
+      {/* ── Top-level view tabs ── */}
+      <div className="proj-tabs">
+        <button
+          className={`proj-tab${projView === "activity" ? " proj-tab-on" : ""}`}
+          onClick={() => setProjView("activity")}>
+          &#9776; Activity
+        </button>
+        <button
+          className={`proj-tab${projView === "deleted" ? " proj-tab-on" : ""}`}
+          onClick={() => setProjView("deleted")}>
+          🗑️ Deleted Issues
+        </button>
+      </div>
+
+      {/* ── Deleted Issues view ── */}
+      {projView === "deleted" && (
+        <DeletedIssues projectKey={projectKey} />
+      )}
+
+      {/* ── Activity view ── */}
+      {projView === "activity" && (<>
       <div className="proj-bar">
         <div className="proj-bar-l">
           {!loading && <span className="cnt">{rows.length} change{rows.length !== 1 ? "s" : ""}</span>}
@@ -882,6 +905,7 @@ function ProjectActivityApp() {
           </div>
         </div>
       )}
+      </>)}
     </div>
   );
 }
