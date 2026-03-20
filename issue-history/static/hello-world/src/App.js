@@ -1,4 +1,5 @@
 ﻿import AnalyticsDashboard from "./components/AnalyticsDashboard";
+import DashboardGadget from "./components/DashboardGadget";
 import DeletedIssues from "./components/DeletedIssues";
 import React from "react";
 import { invoke, view as forgeView } from "@forge/bridge";
@@ -916,7 +917,10 @@ function App() {
   React.useEffect(() => {
     forgeView.getContext()
       .then(ctx => {
-        if (ctx && ctx.extension && ctx.extension.project && !ctx.extension.issue) {
+        const mk = ctx?.moduleKey || "";
+        if (mk === "issue-history-dashboard-gadget") {
+          setMode("gadget");
+        } else if (ctx && ctx.extension && ctx.extension.project && !ctx.extension.issue) {
           setMode("project");
         } else {
           setMode("issue");
@@ -924,6 +928,7 @@ function App() {
       })
       .catch(() => setMode("issue"));
   }, []);
+  if (mode === "gadget")  return <DashboardGadget />;
   if (mode === "project") return <ProjectActivityApp />;
   if (mode === "issue")   return <IssueActivityApp />;
   return <div className="wih"><div className="state-box"><div className="spinner"></div></div></div>;

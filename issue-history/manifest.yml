@@ -13,6 +13,16 @@ modules:
       resolver:
         function: handler
 
+  jira:dashboardGadget:
+    - key: issue-history-dashboard-gadget
+      title: Issue History Gadget
+      description: View recent issue activity, top users, and change stats across your projects
+      thumbnail: /thumbnail.svg
+      resource: main
+      resolver:
+        function: handler
+
+
   trigger:
     - key: issue-created-trigger
       function: issueCreated

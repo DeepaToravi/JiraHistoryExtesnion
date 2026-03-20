@@ -66,6 +66,27 @@ resolver.define('fetchHistory', async (req) => {
     return { history: [], total: 0, error: err.message };
   }
 });
+resolver.define("getDashboardStats", async () => {
+  const data = await kvs.query("history").getMany();
+
+  let userMap = {};
+  let fieldMap = {};
+
+  data.forEach(item => {
+    userMap[item.author] = (userMap[item.author] || 0) + 1;
+    fieldMap[item.field] = (fieldMap[item.field] || 0) + 1;
+  });
+
+  const topUser = Object.entries(userMap).sort((a,b)=>b[1]-a[1])[0]?.[0];
+  const topField = Object.entries(fieldMap).sort((a,b)=>b[1]-a[1])[0]?.[0];
+
+  return {
+    total: data.length,
+    topUser,
+    topField
+  };
+});
+
 
 resolver.define('fetchProjectHistory', async (req) => {
   console.log('=== fetchProjectHistory called ===');
@@ -240,6 +261,121 @@ resolver.define('purgeDeletedIssue', async (req) => {
   }
 });
 
+// ── Dashboard Gadget resolver ─────────────────────────────────────────────
+
+resolver.define('fetchGadgetHistory', async (req) => {
+  const {
+    days = 3,
+    projectKey = 'all',
+    jqlMode = 'space',
+    jqlText = '',
+    currentUserOnly = false,
+  } = req.payload || {};
+
+  // get current user
+  let currentUser = null;
+  try {
+    const meResp = await api.asUser().requestJira(route`/rest/api/3/myself`);
+    const me = await meResp.json();
+    currentUser = { name: me.displayName || '', accountId: me.accountId || '' };
+  } catch (e) {
+    console.error('fetchGadgetHistory: could not get current user', e.message);
+  }
+
+  const adjDays = Math.max(1, Number(days) || 3);
+  const since = new Date();
+  since.setDate(since.getDate() - adjDays);
+  const sinceStr = since.toISOString().slice(0, 10);
+  const sinceMs  = since.getTime();
+
+  let jql = '';
+  if (jqlMode === 'jql' && jqlText.trim()) {
+    jql = `(${jqlText.trim()}) AND updated >= "${sinceStr}" ORDER BY updated DESC`;
+  } else if (jqlMode === 'space' && projectKey && projectKey !== 'all') {
+    jql = `project = "${projectKey}" AND updated >= "${sinceStr}" ORDER BY updated DESC`;
+  } else {
+    jql = `updated >= "${sinceStr}" ORDER BY updated DESC`;
+  }
+
+  const history  = [];
+  const projsSet = new Set();
+
+  try {
+    const resp = await api.asUser().requestJira(
+      route`/rest/api/3/search/jql?jql=${jql}&fields=summary,project&expand=changelog&maxResults=100`
+    );
+    const data = await resp.json();
+    (data.issues || []).forEach(issue => {
+      const proj = issue.fields?.project?.key || issue.key?.split('-')[0] || '';
+      if (proj) projsSet.add(proj);
+      (issue.changelog?.histories || []).forEach(h => {
+        if (new Date(h.created).getTime() < sinceMs) return;
+        const author    = h.author?.displayName || '';
+        const authorId  = h.author?.accountId   || '';
+        if (!author || author.toLowerCase() === 'system') return;
+        if (currentUserOnly && currentUser && authorId !== currentUser.accountId) return;
+        (h.items || []).forEach(it => {
+          const fromVal = (it.fromString !== undefined && it.fromString !== null) ? it.fromString : (it.from || '');
+          const toVal   = (typeof it['toString'] === 'string') ? it['toString'] : (it.to || '');
+          history.push({
+            timestamp:  h.created,
+            author,
+            authorId,
+            issueKey:   issue.key,
+            summary:    issue.fields?.summary || '',
+            projectKey: proj,
+            field:      it.field || '',
+            from:       fromVal,
+            to:         toVal,
+          });
+        });
+      });
+    });
+  } catch (e) {
+    console.error('fetchGadgetHistory error:', e.message);
+    return { history: [], total: 0, currentUser, projects: [], error: e.message };
+  }
+
+  history.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  return {
+    history,
+    total:       history.length,
+    currentUser,
+    projects:    Array.from(projsSet).sort(),
+  };
+});
+
+resolver.define('saveReport', async (req) => {
+  const { name, filters, viewType } = req.payload;
+  const userId = req.context.accountId;
+
+  const report = {
+    id: `report-${Date.now()}`,
+    name,
+    userId,
+    filters,
+    viewType,
+    createdAt: new Date().toISOString()
+  };
+
+  await kvs.set(report.id, report);
+
+  return report;
+});
+resolver.define('getReports', async (req) => {
+  const userId = req.context.accountId;
+
+  const res = await kvs.query().getMany();
+
+  return res.results
+    .map(r => r.value)
+    .filter(r => r.userId === userId);
+});
+resolver.define('deleteReport', async (req) => {
+  await kvs.delete(req.payload.id);
+});
+
 export const handler = resolver.getDefinitions();
 export { issueUpdated, issueDeleted };
 export const issueCreated = async () => {};
+

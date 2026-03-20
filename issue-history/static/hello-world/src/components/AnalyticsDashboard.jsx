@@ -8,6 +8,7 @@ export default function AnalyticsDashboard({ rows, isProject }) {
     const users = new Set();
     const fields = {};
     const issues = new Set();
+    
 
     rows.forEach(r => {
       if (r.author) users.add(r.author);
