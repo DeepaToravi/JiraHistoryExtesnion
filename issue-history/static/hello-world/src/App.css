@@ -105,10 +105,13 @@
 .fh-btn:hover,.fh-btn.fh-active{color:#0052CC;background:#DEEBFF}
 .fh-clear{background:none;border:none;cursor:pointer;font-size:10px;color:#BF2600;padding:1px 3px;line-height:1;border-radius:2px}
 .fh-clear:hover{background:#FFEBE6}
-.fh-list{position:absolute;top:calc(100% + 2px);left:0;background:#fff;border:1px solid #DFE1E6;border-radius:3px;box-shadow:0 4px 12px rgba(9,30,66,.15);z-index:400;min-width:160px;list-style:none;padding:4px 0}
+.fh-list{position:absolute;top:calc(100% + 2px);left:0;background:#fff;border:1px solid #DFE1E6;border-radius:3px;box-shadow:0 4px 12px rgba(9,30,66,.15);z-index:400;min-width:180px;list-style:none;padding:4px 0;max-height:300px;overflow-y:auto}
 .fh-list li{padding:7px 14px;font-size:13px;cursor:pointer;white-space:nowrap;color:#172B4D}
 .fh-list li:hover{background:#F4F5F7}
 .fh-list li.dd-active{color:#0052CC;font-weight:600;background:#DEEBFF}
+.fh-search-item{padding:6px 10px;position:sticky;top:0;background:#fff;border-bottom:1px solid #F4F5F7;cursor:default}
+.fh-search-inp{width:100%;border:1px solid #DFE1E6;border-radius:3px;padding:4px 8px;font-size:12px;outline:none;color:#172B4D;background:#FAFBFC}
+.fh-search-inp:focus{border-color:#0052CC;box-shadow:0 0 0 2px rgba(0,82,204,.2)}
 /* Field chip for stream view */
 .field-chip{display:inline-flex;align-items:center;gap:6px;background:#DEEBFF;border:1px solid #B3D4FF;color:#0052CC;border-radius:3px;padding:3px 10px;font-size:12px}
 .field-chip-x{background:none;border:none;cursor:pointer;color:#0052CC;font-size:11px;padding:0;line-height:1}

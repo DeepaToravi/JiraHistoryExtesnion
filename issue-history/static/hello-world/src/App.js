@@ -219,17 +219,21 @@ function DateFilter({ opts, val, label, onChange, customStart, customEnd, onCust
 
 function FieldHeaderFilter({ opts, val, onChange }) {
   const [open, setOpen] = React.useState(false);
+  const [search, setSearch] = React.useState("");
   const ref = React.useRef(null);
   React.useEffect(() => {
-    const h = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const h = e => { if (ref.current && !ref.current.contains(e.target)) { setOpen(false); setSearch(""); } };
     document.addEventListener("mousedown", h);
     return () => document.removeEventListener("mousedown", h);
   }, []);
   const active = val !== "any";
+  const visibleOpts = search.trim()
+    ? opts.filter(o => o.value === "any" || o.label.toLowerCase().includes(search.toLowerCase()))
+    : opts;
   return (
     <span className={`fh-wrap${active ? " fh-on" : ""}`} ref={ref}>
       <button className={`fh-btn${active ? " fh-active" : ""}`}
-        onClick={e => { e.stopPropagation(); setOpen(v => !v); }}
+        onClick={e => { e.stopPropagation(); setOpen(v => !v); setSearch(""); }}
         title={active ? `Filtering: ${val}` : "Filter by field"}>&#9783;</button>
       {active && (
         <button className="fh-clear"
@@ -238,9 +242,20 @@ function FieldHeaderFilter({ opts, val, onChange }) {
       )}
       {open && (
         <ul className="fh-list">
-          {opts.map(o => (
+          {opts.length > 8 && (
+            <li className="fh-search-item" onClick={e => e.stopPropagation()}>
+              <input
+                className="fh-search-inp"
+                placeholder="Search fields..."
+                value={search}
+                autoFocus
+                onChange={e => setSearch(e.target.value)}
+              />
+            </li>
+          )}
+          {visibleOpts.map(o => (
             <li key={o.value} className={o.value === val ? "dd-active" : ""}
-              onClick={e => { e.stopPropagation(); onChange(o.value); setOpen(false); }}>
+              onClick={e => { e.stopPropagation(); onChange(o.value); setOpen(false); setSearch(""); }}>
               {o.label}
             </li>
           ))}
@@ -282,6 +297,7 @@ function DDMenu({ label, opts, val, onChange, alignRight }) {
 
 function IssueActivityApp() {
   const [allRows, setAllRows]   = React.useState([]);
+  const [allJiraFields, setAllJiraFields] = React.useState([]);
   const [loading, setLoading]   = React.useState(true);
   const [error,   setError]     = React.useState(null);
   const [issueKey, setIssueKey] = React.useState(null);
@@ -315,7 +331,11 @@ function IssueActivityApp() {
       const ctx = await forgeView.getContext();
       const key = ctx && ctx.extension && ctx.extension.issue && ctx.extension.issue.key;
       if (key) setIssueKey(key);
-      const res = await invoke("fetchHistory", { issueKey: key });
+      // Fetch history and all available Jira fields in parallel
+      const [res, fieldsRes] = await Promise.all([
+        invoke("fetchHistory", { issueKey: key }),
+        invoke("fetchIssueFields", { issueKey: key }).catch(() => ({ fields: [] })),
+      ]);
       if (res && res.error && !(res.history || []).length) {
         setError(res.error);
       } else {
@@ -323,6 +343,7 @@ function IssueActivityApp() {
         loadedAt.current = Date.now();
         setPage(1);
       }
+      setAllJiraFields(fieldsRes?.fields || []);
     } catch (e) {
       setError(e.message || "Failed to load history");
     } finally {
@@ -338,9 +359,23 @@ function IssueActivityApp() {
   }, [allRows]);
 
   const fieldOpts = React.useMemo(() => {
-    const s = new Set(allRows.map(r => r.field).filter(Boolean));
-    return [{ value: "any", label: "All Fields" }, ...Array.from(s).sort().map(f => ({ value: f, label: f }))];
-  }, [allRows]);
+    // Fields that appear in history (exact names, used for filter matching)
+    const historyFields = new Set(allRows.map(r => r.field).filter(Boolean));
+    // Lowercase lookup to prevent case-duplicate entries
+    const lowerSeen = new Set(Array.from(historyFields).map(f => f.toLowerCase()));
+    // Merge in every field from the Jira API not already covered by history
+    const merged = new Set(historyFields);
+    allJiraFields.forEach(f => {
+      if (f.name && !lowerSeen.has(f.name.toLowerCase())) {
+        merged.add(f.name);
+        lowerSeen.add(f.name.toLowerCase());
+      }
+    });
+    return [
+      { value: "any", label: "All Fields" },
+      ...Array.from(merged).sort((a, b) => a.localeCompare(b)).map(f => ({ value: f, label: f })),
+    ];
+  }, [allRows, allJiraFields]);
 
   const rows = React.useMemo(() => {
     let r = allRows;

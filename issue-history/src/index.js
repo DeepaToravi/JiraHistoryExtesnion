@@ -375,6 +375,22 @@ resolver.define('deleteReport', async (req) => {
   await kvs.delete(req.payload.id);
 });
 
+// ── Fetch all available Jira fields (system + custom) for the field filter dropdown ──
+resolver.define('fetchIssueFields', async () => {
+  try {
+    const response = await api.asUser().requestJira(route`/rest/api/3/field`);
+    if (!response.ok) return { fields: [] };
+    const data = await response.json();
+    const fields = (Array.isArray(data) ? data : [])
+      .filter(f => f.name && f.id)
+      .map(f => ({ id: f.id, name: f.name, custom: !!f.custom }));
+    return { fields };
+  } catch (e) {
+    console.error('fetchIssueFields error:', e);
+    return { fields: [], error: e.message };
+  }
+});
+
 export const handler = resolver.getDefinitions();
 export { issueUpdated, issueDeleted };
 export const issueCreated = async () => {};
