@@ -18,6 +18,7 @@ export default function DeletedIssues({ projectKey }) {
   const [purging,   setPurging]   = React.useState(null);
   const [toast,     setToast]     = React.useState(null);
   const [search,    setSearch]    = React.useState("");
+  const [isAdmin,   setIsAdmin]   = React.useState(false);
 
   const load = React.useCallback(async () => {
     setLoading(true); setError(null);
@@ -25,6 +26,7 @@ export default function DeletedIssues({ projectKey }) {
       const res = await invoke("fetchDeletedIssues", { projectKey });
       if (res.error && !res.issues?.length) { setError(res.error); }
       else { setItems(res.issues || []); }
+      if (res.isAdmin !== undefined) setIsAdmin(res.isAdmin);
     } catch (e) {
       setError(e.message || "Failed to load deleted issues");
     } finally {
@@ -198,9 +200,9 @@ export default function DeletedIssues({ projectKey }) {
                   <td className="del-actions">
                     <button
                       className="del-btn-restore"
-                      disabled={restoring === item.issueKey || !!purging}
+                      disabled={!isAdmin || restoring === item.issueKey || !!purging}
                       onClick={() => restore(item.issueKey)}
-                      title="Recreate this issue in Jira">
+                      title={isAdmin ? "Recreate this issue in Jira" : "Only admins can restore issues"}>
                       {restoring === item.issueKey ? "Restoring…" : "↩ Restore"}
                     </button>
                     <button

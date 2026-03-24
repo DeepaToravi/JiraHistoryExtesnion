@@ -191,16 +191,26 @@ resolver.define('fetchDeletedIssues', async (req) => {
   const projectKey = req.context?.extension?.project?.key || req.payload?.projectKey;
   if (!projectKey) return { issues: [], error: 'No project key found' };
 
+  // Check if the current user is a project admin or site admin
+  let isAdmin = false;
+  try {
+    const permResp = await api.asUser().requestJira(
+      route`/rest/api/3/mypermissions?projectKey=${projectKey}&permissions=ADMINISTER_PROJECTS`
+    );
+    const perms = await permResp.json();
+    isAdmin = perms?.permissions?.ADMINISTER_PROJECTS?.havePermission === true;
+  } catch (_) {}
+
   try {
     const result = await kvs.query()
       .where('key', WhereConditions.beginsWith(`deleted:${projectKey}:`))
       .getMany();
     const issues = (result.results || []).map(r => r.value).filter(Boolean);
     issues.sort((a, b) => new Date(b.deletedAt) - new Date(a.deletedAt));
-    return { issues, total: issues.length };
+    return { issues, total: issues.length, isAdmin };
   } catch (e) {
     console.error('fetchDeletedIssues error:', e);
-    return { issues: [], error: e.message };
+    return { issues: [], error: e.message, isAdmin };
   }
 });
 
@@ -209,6 +219,19 @@ resolver.define('restoreDeletedIssue', async (req) => {
   if (!issueKey) return { success: false, error: 'No issue key provided' };
 
   const projectKey = issueKey.split('-')[0];
+
+  // Only admins (project admin or site admin) may restore issues
+  let isAdmin = false;
+  try {
+    const permResp = await api.asUser().requestJira(
+      route`/rest/api/3/mypermissions?projectKey=${projectKey}&permissions=ADMINISTER_PROJECTS`
+    );
+    const perms = await permResp.json();
+    isAdmin = perms?.permissions?.ADMINISTER_PROJECTS?.havePermission === true;
+  } catch (_) {}
+
+  if (!isAdmin) return { success: false, error: 'Only admins can restore issues' };
+
   const kvKey = `deleted:${projectKey}:${issueKey}`;
 
   try {
