@@ -200,6 +200,8 @@ export default function DashboardGadget() {
   const [currentOnly, setCurrentOnly] = React.useState(false);
   const [keyFilter,   setKeyFilter]   = React.useState([]);
   const [fieldFilter, setFieldFilter] = React.useState([]);
+  const [selectedUser, setSelectedUser] = React.useState(null);
+  const [userSearch,   setUserSearch]   = React.useState("");
   const [sortAsc,     setSortAsc]     = React.useState(false);
 
   // ui open states
@@ -218,7 +220,7 @@ export default function DashboardGadget() {
   const closeAll = React.useCallback(() => {
     setShowSpaceMenu(false); setShowProjMenu(false); setShowUserMenu(false);
     setShowKeyPicker(false); setShowFieldPicker(false); setShowColPicker(false);
-    setShowRefresh(false);
+    setShowRefresh(false); setUserSearch("");
   }, []);
 
   const load = React.useCallback(() => {
@@ -245,14 +247,21 @@ export default function DashboardGadget() {
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [refreshInterval, load]);
 
+  // unique authors for user search dropdown
+  const uniqueUsers = React.useMemo(() => {
+    const s = new Set(history.map(r => r.author).filter(Boolean));
+    return Array.from(s).sort((a, b) => a.localeCompare(b));
+  }, [history]);
+
   // client-side filters
   const rows = React.useMemo(() => {
     let r = history;
     if (keyFilter.length > 0)   r = r.filter(x => keyFilter.includes(x.issueKey));
     if (fieldFilter.length > 0) r = r.filter(x => fieldFilter.includes(x.field));
+    if (selectedUser)            r = r.filter(x => x.author === selectedUser);
     if (sortAsc) r = [...r].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
     return r;
-  }, [history, keyFilter, fieldFilter, sortAsc]);
+  }, [history, keyFilter, fieldFilter, selectedUser, sortAsc]);
 
   const exportCSV = () => {
     const header = ["Date of change","Key","Updater","Field","From","To","Summary"];
@@ -270,7 +279,7 @@ export default function DashboardGadget() {
   };
 
   const projLabel = projectKey === "all" ? "All work items" : projectKey;
-  const userLabel = currentOnly ? (curUser?.name || "Current User") : "All users";
+  const userLabel = selectedUser ? selectedUser : (currentOnly ? (curUser?.name || "Current User") : "All users");
 
   if (loading && history.length === 0) return (
     <div className="gad-wrap">
@@ -343,18 +352,51 @@ export default function DashboardGadget() {
               onClick={() => { closeAll(); setShowUserMenu(v => !v); }}>
               {userLabel} ▾
             </button>
-            {currentOnly && (
-              <button className="gad-tag-clear" onClick={() => setCurrentOnly(false)} title="Clear">✕</button>
+            {(currentOnly || selectedUser) && (
+              <button className="gad-tag-clear" onClick={() => { setCurrentOnly(false); setSelectedUser(null); }} title="Clear">✕</button>
             )}
           </div>
           {showUserMenu && (
-            <div className="gad-menu">
-              <div className={`gad-menu-item${!currentOnly?" gad-menu-on":""}`}
-                onClick={() => { setCurrentOnly(false); setShowUserMenu(false); }}>All users</div>
-              <div className={`gad-menu-item${currentOnly?" gad-menu-on":""}`}
-                onClick={() => { setCurrentOnly(true); setShowUserMenu(false); }}>
-                {curUser?.name || "Current User"}
+            <div className="gad-menu gad-menu-user">
+              <div className="gad-menu-search-row" onClick={e => e.stopPropagation()}>
+                <input
+                  className="gad-menu-search-inp"
+                  placeholder="Search users..."
+                  value={userSearch}
+                  autoFocus
+                  onChange={e => setUserSearch(e.target.value)}
+                />
               </div>
+              {"all users".includes(userSearch.toLowerCase()) && (
+                <div className={`gad-menu-item${!currentOnly && !selectedUser ? " gad-menu-on" : ""}`}
+                  onClick={() => { setCurrentOnly(false); setSelectedUser(null); setShowUserMenu(false); setUserSearch(""); }}>All users</div>
+              )}
+              {(() => {
+                const filtered = uniqueUsers.filter(u => !userSearch || u.toLowerCase().includes(userSearch.toLowerCase()));
+                const allUsersVisible = "all users".includes(userSearch.toLowerCase());
+                if (filtered.length === 0 && !allUsersVisible) {
+                  return (
+                    <div className="gad-menu-no-results">
+                      No users found for "{userSearch}"<br/>
+                      <span className="gad-menu-no-results-hint">Only users who edited items in this view appear here.</span>
+                    </div>
+                  );
+                }
+                return filtered.map(u => (
+                  <div key={u}
+                    className={`gad-menu-item${selectedUser === u || (currentOnly && curUser?.name === u) ? " gad-menu-on" : ""}`}
+                    onClick={() => {
+                      if (curUser?.name === u && !userSearch) {
+                        setCurrentOnly(true); setSelectedUser(null);
+                      } else {
+                        setSelectedUser(u); setCurrentOnly(false);
+                      }
+                      setShowUserMenu(false); setUserSearch("");
+                    }}>
+                    {u}
+                  </div>
+                ));
+              })()}
             </div>
           )}
         </div>

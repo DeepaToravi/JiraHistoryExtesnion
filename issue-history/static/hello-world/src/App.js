@@ -265,30 +265,48 @@ function FieldHeaderFilter({ opts, val, onChange }) {
   );
 }
 
-function DDMenu({ label, opts, val, onChange, alignRight }) {
+function DDMenu({ label, opts, val, onChange, alignRight, searchable }) {
   const [open, setOpen] = React.useState(false);
+  const [search, setSearch] = React.useState("");
   const ref = React.useRef(null);
   React.useEffect(() => {
-    const h = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const h = e => { if (ref.current && !ref.current.contains(e.target)) { setOpen(false); setSearch(""); } };
     document.addEventListener("mousedown", h);
     return () => document.removeEventListener("mousedown", h);
   }, []);
   const sel = opts.find(o => o.value === val);
+  const visibleOpts = searchable && search.trim()
+    ? opts.filter(o => o.value === "any" || o.label.toLowerCase().includes(search.toLowerCase()))
+    : opts;
   return (
     <div className="dd-wrap" ref={ref}>
-      <button className="dd-btn" onClick={() => setOpen(v => !v)}>
+      <button className="dd-btn" onClick={() => { setOpen(v => !v); setSearch(""); }}>
         {label && <span className="dd-prefix">{label}</span>}
         <span>{sel ? sel.label : val}</span>
         <span className="dd-arrow">&#9660;</span>
       </button>
       {open && (
         <ul className={`dd-list${alignRight ? " align-r" : ""}`}>
-          {opts.map(o => (
+          {searchable && (
+            <li className="dd-search-item" onClick={e => e.stopPropagation()}>
+              <input
+                className="dd-search-inp"
+                placeholder="Search users..."
+                value={search}
+                autoFocus
+                onChange={e => setSearch(e.target.value)}
+              />
+            </li>
+          )}
+          {visibleOpts.map(o => (
             <li key={o.value} className={o.value === val ? "dd-active" : ""}
-              onClick={() => { onChange(o.value); setOpen(false); }}>
+              onClick={() => { onChange(o.value); setOpen(false); setSearch(""); }}>
               {o.label}
             </li>
           ))}
+          {searchable && search.trim() && visibleOpts.filter(o => o.value !== "any").length === 0 && (
+            <li className="dd-no-results">No users found for "{search}"</li>
+          )}
         </ul>
       )}
     </div>
@@ -448,7 +466,7 @@ function IssueActivityApp() {
             onCustomStart={setCustomStart}
             onCustomEnd={setCustomEnd}
           />
-          <DDMenu label="Updated by: " opts={userOpts} val={userF} onChange={setUserF} />
+          <DDMenu label="Updated by: " opts={userOpts} val={userF} onChange={setUserF} searchable />
 
           <div className="srch">
             <span className="srch-ico">&#128269;</span>
@@ -826,7 +844,7 @@ function ProjectActivityApp() {
             <span className={loading ? "spin-ico" : ""}>&#8635;</span>
           </button>
           <DDMenu label="Updated by: " opts={userOpts} val={userF}
-            onChange={v => { setUserF(v); setPage(1); }} />
+            onChange={v => { setUserF(v); setPage(1); }} searchable />
           <span className="days-wrap">
             Within the last:
             <input className="days-inp" type="number" min="1" max="365"
