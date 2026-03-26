@@ -170,17 +170,24 @@ ${rows.map(r => `<tr>${[fmtDate(r.ts), r.author, r.field, r.from, r.to].map(v =>
   else { dlBlob(`${key || "history"}-print.html`, "text/html", html); }
 }
 
-function DateFilter({ opts, val, label, onChange, customStart, customEnd, onCustomStart, onCustomEnd }) {
+function DateFilter({ opts, val, label, onChange, customStart, customEnd, onCustomStart, onCustomEnd, onOpenChange }) {
   const [open, setOpen] = React.useState(false);
   const ref = React.useRef(null);
+  const setOpenAndNotify = React.useCallback((v) => {
+    setOpen(prev => {
+      const next = typeof v === "function" ? v(prev) : v;
+      if (onOpenChange) onOpenChange(next);
+      return next;
+    });
+  }, [onOpenChange]);
   React.useEffect(() => {
-    const h = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const h = e => { if (ref.current && !ref.current.contains(e.target)) setOpenAndNotify(false); };
     document.addEventListener("mousedown", h);
     return () => document.removeEventListener("mousedown", h);
-  }, []);
+  }, [setOpenAndNotify]);
   return (
     <div className="dd-wrap" ref={ref}>
-      <button className="dd-btn" onClick={() => setOpen(v => !v)}>
+      <button className="dd-btn" onClick={() => setOpenAndNotify(v => !v)}>
         <span className="dd-prefix">Date: </span>
         <span>{label}</span>
         <span className="dd-arrow">&#9660;</span>
@@ -190,7 +197,7 @@ function DateFilter({ opts, val, label, onChange, customStart, customEnd, onCust
           {opts.map(o => (
             <div key={o.value}
               className={"dd-list-item" + (o.value === val ? " dd-active" : "") + (o.value === "custom" ? " dd-custom-trigger" : "")}
-              onClick={() => { onChange(o.value); if (o.value !== "custom") setOpen(false); }}>
+              onClick={() => { onChange(o.value); if (o.value !== "custom") setOpenAndNotify(false); }}>
               {o.label}
             </div>
           ))}
@@ -208,7 +215,7 @@ function DateFilter({ opts, val, label, onChange, customStart, customEnd, onCust
                   min={customStart || undefined}
                   onChange={e => onCustomEnd(e.target.value)} />
               </div>
-              <button className="prim-btn cdr-apply" onClick={() => setOpen(false)}>Apply</button>
+              <button className="prim-btn cdr-apply" onClick={() => setOpenAndNotify(false)}>Apply</button>
             </div>
           )}
         </div>
@@ -333,6 +340,7 @@ function IssueActivityApp() {
   const [pageSize,  setPageSize]  = React.useState(25);
   const loadedAt = React.useRef(null);
   const [lastUpdated, setLastUpdated] = React.useState("");
+  const [datePickerOpen, setDatePickerOpen] = React.useState(false);
 
   const [exportOpen, setExportOpen] = React.useState(false);
   const exportRef = React.useRef(null);
@@ -465,6 +473,7 @@ function IssueActivityApp() {
             customEnd={customEnd}
             onCustomStart={setCustomStart}
             onCustomEnd={setCustomEnd}
+            onOpenChange={setDatePickerOpen}
           />
           <DDMenu label="Updated by: " opts={userOpts} val={userF} onChange={setUserF} searchable />
 
@@ -601,6 +610,8 @@ function IssueActivityApp() {
           </div>
         </div>
       )}
+      {/* spacer so the date dropdown is never clipped by a short iframe */}
+      {datePickerOpen && <div aria-hidden="true" className="date-picker-spacer" />}
     </div>
   );
 }
