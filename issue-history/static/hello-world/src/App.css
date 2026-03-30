@@ -314,8 +314,10 @@
                      padding:4px 8px; font-size:12px; outline:none; color:#172B4D; background:#FAFBFC; }
 .dd-search-inp:focus { border-color:#0052CC; box-shadow:0 0 0 2px rgba(0,82,204,.2); }
 .dd-no-results      { padding:10px 14px; font-size:12px; color:#6B778C; font-style:italic; cursor:default; }
+.dd-hint            { padding:8px 14px; font-size:11px; color:#97A0AF; font-style:italic; cursor:default; }
 .gad-menu-no-results { padding:10px 12px; font-size:12px; color:#6B778C; font-style:italic; cursor:default; line-height:1.6; }
 .gad-menu-no-results-hint { font-size:11px; color:#97A0AF; font-style:normal; }
+.gad-menu-hint      { padding:8px 12px; font-size:11px; color:#97A0AF; font-style:italic; cursor:default; }
 
 /* pickers */
 .gad-picker-pop    { position:absolute; top:calc(100% + 2px); left:0; z-index:300;

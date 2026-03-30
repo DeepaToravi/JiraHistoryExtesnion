@@ -282,8 +282,10 @@ function DDMenu({ label, opts, val, onChange, alignRight, searchable }) {
     return () => document.removeEventListener("mousedown", h);
   }, []);
   const sel = opts.find(o => o.value === val);
-  const visibleOpts = searchable && search.trim()
-    ? opts.filter(o => o.value === "any" || o.label.toLowerCase().includes(search.toLowerCase()))
+  const visibleOpts = searchable
+    ? search.trim()
+      ? opts.filter(o => o.value === "any" || o.label.toLowerCase().includes(search.toLowerCase()))
+      : opts.filter(o => o.value === "any")
     : opts;
   return (
     <div className="dd-wrap" ref={ref}>
@@ -313,6 +315,9 @@ function DDMenu({ label, opts, val, onChange, alignRight, searchable }) {
           ))}
           {searchable && search.trim() && visibleOpts.filter(o => o.value !== "any").length === 0 && (
             <li className="dd-no-results">No users found for "{search}"</li>
+          )}
+          {searchable && !search.trim() && (
+            <li className="dd-hint">Type to search for a user</li>
           )}
         </ul>
       )}

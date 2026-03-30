@@ -367,18 +367,17 @@ export default function DashboardGadget() {
                   onChange={e => setUserSearch(e.target.value)}
                 />
               </div>
-              {"all users".includes(userSearch.toLowerCase()) && (
-                <div className={`gad-menu-item${!currentOnly && !selectedUser ? " gad-menu-on" : ""}`}
-                  onClick={() => { setCurrentOnly(false); setSelectedUser(null); setShowUserMenu(false); setUserSearch(""); }}>All users</div>
+              <div className={`gad-menu-item${!currentOnly && !selectedUser ? " gad-menu-on" : ""}`}
+                onClick={() => { setCurrentOnly(false); setSelectedUser(null); setShowUserMenu(false); setUserSearch(""); }}>All users</div>
+              {!userSearch.trim() && (
+                <div className="gad-menu-hint">Type to search for a user</div>
               )}
-              {(() => {
-                const filtered = uniqueUsers.filter(u => !userSearch || u.toLowerCase().includes(userSearch.toLowerCase()));
-                const allUsersVisible = "all users".includes(userSearch.toLowerCase());
-                if (filtered.length === 0 && !allUsersVisible) {
+              {userSearch.trim() && (() => {
+                const filtered = uniqueUsers.filter(u => u.toLowerCase().includes(userSearch.toLowerCase()));
+                if (filtered.length === 0) {
                   return (
                     <div className="gad-menu-no-results">
-                      No users found for "{userSearch}"<br/>
-                      <span className="gad-menu-no-results-hint">Only users who edited items in this view appear here.</span>
+                      No users found for &ldquo;{userSearch}&rdquo;
                     </div>
                   );
                 }
@@ -386,11 +385,7 @@ export default function DashboardGadget() {
                   <div key={u}
                     className={`gad-menu-item${selectedUser === u || (currentOnly && curUser?.name === u) ? " gad-menu-on" : ""}`}
                     onClick={() => {
-                      if (curUser?.name === u && !userSearch) {
-                        setCurrentOnly(true); setSelectedUser(null);
-                      } else {
-                        setSelectedUser(u); setCurrentOnly(false);
-                      }
+                      setSelectedUser(u); setCurrentOnly(false);
                       setShowUserMenu(false); setUserSearch("");
                     }}>
                     {u}
