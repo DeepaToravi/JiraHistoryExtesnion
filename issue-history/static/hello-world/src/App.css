@@ -495,3 +495,9 @@
 
 /* ── Chart subtitle ────────────────────────────────────────────────────── */
 .chart-sub         { font-size:12px; color:#6B778C; margin:-4px 0 10px; font-style:italic; }
+
+/* ── Permission denied state ───────────────────────────────────────────── */
+.perm-denied       { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:48px 24px; text-align:center; }
+.perm-denied-ico   { font-size:40px; margin-bottom:12px; }
+.perm-denied-title { font-size:18px; font-weight:700; color:#172B4D; margin:0 0 8px; }
+.perm-denied-sub   { font-size:14px; color:#6B778C; margin:0; max-width:360px; line-height:1.6; }

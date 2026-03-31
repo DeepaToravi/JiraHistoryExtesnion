@@ -758,6 +758,8 @@ function ProjectActivityApp() {
   const [exportOpen, setExportOpen] = React.useState(false);
   const exportRef = React.useRef(null);
   const ctxRef    = React.useRef(null);
+  const [perms,   setPerms]   = React.useState(null); // null = not yet loaded
+  const [isAdmin, setIsAdmin] = React.useState(false);
 
   React.useEffect(() => {
     const h = e => { if (exportRef.current && !exportRef.current.contains(e.target)) setExportOpen(false); };
@@ -789,6 +791,25 @@ function ProjectActivityApp() {
   }, []);
 
   React.useEffect(() => { loadData(8); }, [loadData]);
+
+  // Fetch saved permissions whenever the projectKey becomes known
+  React.useEffect(() => {
+    if (!projectKey) return;
+    invoke("getAppPermissions", { projectKey })
+      .then(res => {
+        setIsAdmin(res?.isAdmin || false);
+        setPerms(res?.settings || { viewHistory: 'all', viewDeleted: 'all', exportHistory: 'all' });
+      })
+      .catch(() => setPerms({ viewHistory: 'all', viewDeleted: 'all', exportHistory: 'all' }));
+  }, [projectKey]);
+
+  // If user is on a tab they no longer have access to, redirect to Activity
+  React.useEffect(() => {
+    if (!perms) return;
+    if (projView === "deleted" && !isAdmin && perms.viewDeleted === 'admins_only') {
+      setProjView("activity");
+    }
+  }, [perms, isAdmin, projView]);
 
   React.useEffect(() => {
     function tick() {
@@ -850,6 +871,11 @@ function ProjectActivityApp() {
     dlBlob(`${projectKey || "project"}-history.xls`, "application/vnd.ms-excel", html);
   }
 
+  // ── Permission enforcement flags (null perms = not yet loaded → default allow) ──
+  const canViewHistory = !perms || isAdmin || perms.viewHistory  !== 'admins_only';
+  const canViewDeleted = !perms || isAdmin || perms.viewDeleted  !== 'admins_only';
+  const canExport      = !perms || isAdmin || perms.exportHistory !== 'admins_only';
+
   // ── Saved Reports: snapshot + restore ──────────────────────────────────
   const currentFilters = { userF, keyF, fieldF, search, asc, daysInput };
 
@@ -877,11 +903,13 @@ function ProjectActivityApp() {
           onClick={() => setProjView("activity")}>
           &#9776; Activity
         </button>
-        <button
-          className={`proj-tab${projView === "deleted" ? " proj-tab-on" : ""}`}
-          onClick={() => setProjView("deleted")}>
-          🗑️ Deleted Issues
-        </button>
+        {canViewDeleted && (
+          <button
+            className={`proj-tab${projView === "deleted" ? " proj-tab-on" : ""}`}
+            onClick={() => setProjView("deleted")}>
+            🗑️ Deleted Issues
+          </button>
+        )}
         <button
           className={`proj-tab${projView === "settings" ? " proj-tab-on" : ""}`}
           onClick={() => setProjView("settings")}>
@@ -900,7 +928,14 @@ function ProjectActivityApp() {
       )}
 
       {/* ── Activity view ── */}
-      {projView === "activity" && (<>
+      {projView === "activity" && (
+        !canViewHistory ? (
+          <div className="perm-denied">
+            <div className="perm-denied-ico">&#128274;</div>
+            <p className="perm-denied-title">Access Restricted</p>
+            <p className="perm-denied-sub">View Issue History is limited to project admins for this project.</p>
+          </div>
+        ) : (<>
       <div className="proj-bar">
         <div className="proj-bar-l">
           {!loading && <span className="cnt">{rows.length} change{rows.length !== 1 ? "s" : ""}</span>}
@@ -925,17 +960,19 @@ function ProjectActivityApp() {
             <input className="srch-inp" placeholder="Search..." value={search}
               onChange={e => { setSearch(e.target.value); setPage(1); }} />
           </div>
-          <div className="dd-wrap" ref={exportRef}>
-            <button className="icon-btn" title="Export" onClick={() => setExportOpen(v => !v)}>
-              &#11015; Export &#9660;
-            </button>
-            {exportOpen && (
-              <ul className="dd-list align-r">
-                <li onClick={() => { doExportXLS(); setExportOpen(false); }}>&#128202; Excel</li>
-                <li onClick={() => { doExportCSV(); setExportOpen(false); }}>&#128196; CSV</li>
-              </ul>
-            )}
-          </div>
+          {canExport && (
+            <div className="dd-wrap" ref={exportRef}>
+              <button className="icon-btn" title="Export" onClick={() => setExportOpen(v => !v)}>
+                &#11015; Export &#9660;
+              </button>
+              {exportOpen && (
+                <ul className="dd-list align-r">
+                  <li onClick={() => { doExportXLS(); setExportOpen(false); }}>&#128202; Excel</li>
+                  <li onClick={() => { doExportCSV(); setExportOpen(false); }}>&#128196; CSV</li>
+                </ul>
+              )}
+            </div>
+          )}
           <SavedReports
             currentFilters={currentFilters}
             viewType="project"
@@ -1028,7 +1065,7 @@ function ProjectActivityApp() {
           </div>
         </div>
       )}
-      </>)}
+      </>))}
     </div>
   );
 }
