@@ -1,5 +1,5 @@
 import React from "react";
-import Charts from "./Charts";
+import Charts, { StatusTransitionChart, StatusTimelineChart } from "./Charts";
 
 export default function AnalyticsDashboard({ rows, isProject }) {
 
@@ -89,8 +89,12 @@ export default function AnalyticsDashboard({ rows, isProject }) {
         </ul>
       </div>
 
-      {/* 🔥 NEW: Charts Section */}
+      {/* 🔥 Charts Section */}
       <Charts rows={rows} />
+
+      {/* 📊 Status Transition Charts */}
+      <StatusTransitionChart rows={rows} />
+      <StatusTimelineChart rows={rows} />
 
       {/* 🔹 Insights */}
       <div className="dash-section">

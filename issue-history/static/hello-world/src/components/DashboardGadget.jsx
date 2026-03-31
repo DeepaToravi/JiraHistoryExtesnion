@@ -1,5 +1,6 @@
 import React from "react";
 import { invoke } from "@forge/bridge";
+import SavedReports from "./SavedReports";
 
 /* ─── helpers ──────────────────────────────────────────────────────── */
 function fmtDate(ts) {
@@ -263,6 +264,22 @@ export default function DashboardGadget() {
     return r;
   }, [history, keyFilter, fieldFilter, selectedUser, sortAsc]);
 
+  // ── Saved Reports ──────────────────────────────────────────────────────
+  const currentFilters = { days, projectKey, spaceMode, jqlText, currentOnly, keyFilter, fieldFilter, selectedUser, sortAsc };
+
+  function handleLoadReport(report) {
+    const f = report.filters || {};
+    if (f.days         !== undefined) setDays(f.days);
+    if (f.projectKey   !== undefined) setProjectKey(f.projectKey);
+    if (f.spaceMode    !== undefined) setSpaceMode(f.spaceMode);
+    if (f.jqlText      !== undefined) setJqlText(f.jqlText);
+    if (f.currentOnly  !== undefined) setCurrentOnly(f.currentOnly);
+    if (f.keyFilter    !== undefined) setKeyFilter(f.keyFilter);
+    if (f.fieldFilter  !== undefined) setFieldFilter(f.fieldFilter);
+    if (f.selectedUser !== undefined) setSelectedUser(f.selectedUser);
+    if (f.sortAsc      !== undefined) setSortAsc(f.sortAsc);
+  }
+
   const exportCSV = () => {
     const header = ["Date of change","Key","Updater","Field","From","To","Summary"];
     const lines  = rows.map(r =>
@@ -295,6 +312,7 @@ export default function DashboardGadget() {
         <span className="gad-count">{rows.length} change{rows.length !== 1 ? "s" : ""}</span>
         <div className="gad-top-acts">
           <button className="gad-btn-export" onClick={exportCSV} title="Export CSV">↧ Export</button>
+          <SavedReports currentFilters={currentFilters} viewType="gadget" onLoad={handleLoadReport} />
           <div className="gad-rel">
             <button className="icon-btn" onClick={() => { closeAll(); setShowRefresh(v => !v); }} title="Refresh settings">⚙</button>
             {showRefresh && <RefreshPop value={refreshInterval} onChange={setRefreshInterval} onClose={() => setShowRefresh(false)} />}

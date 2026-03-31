@@ -1,6 +1,8 @@
 ﻿import AnalyticsDashboard from "./components/AnalyticsDashboard";
 import DashboardGadget from "./components/DashboardGadget";
 import DeletedIssues from "./components/DeletedIssues";
+import SavedReports from "./components/SavedReports";
+import AppPermissions from "./components/AppPermissions";
 import React from "react";
 import { invoke, view as forgeView } from "@forge/bridge";
 import "./App.css";
@@ -384,6 +386,23 @@ function IssueActivityApp() {
 
   React.useEffect(() => { load(); }, [load]);
 
+  // ── Restore all filters from a saved report ──────────────────────────
+  function handleLoadReport(report) {
+    const f = report.filters || {};
+    if (f.dateF       !== undefined) setDateF(f.dateF);
+    if (f.customStart !== undefined) setCustomStart(f.customStart);
+    if (f.customEnd   !== undefined) setCustomEnd(f.customEnd);
+    if (f.userF       !== undefined) setUserF(f.userF);
+    if (f.fieldF      !== undefined) setFieldF(f.fieldF);
+    if (f.search      !== undefined) setSearch(f.search);
+    if (f.asc         !== undefined) setAsc(f.asc);
+    if (f.viewMode    !== undefined) setViewMode(f.viewMode);
+    setPage(1);
+  }
+
+  // ── Current filter snapshot for saving ───────────────────────────────
+  const currentFilters = { dateF, customStart, customEnd, userF, fieldF, search, asc, viewMode };
+
   const userOpts = React.useMemo(() => {
     const s = new Set(allRows.map(r => r.author).filter(Boolean));
     return [{ value: "any", label: "Any User" }, ...Array.from(s).sort().map(a => ({ value: a, label: a }))];
@@ -499,6 +518,11 @@ function IssueActivityApp() {
               </ul>
             )}
           </div>
+          <SavedReports
+            currentFilters={currentFilters}
+            viewType={viewMode}
+            onLoad={handleLoadReport}
+          />
         </div>
       </div>
 
@@ -728,7 +752,7 @@ function ProjectActivityApp() {
   const [asc,    setAsc]    = React.useState(false);
   const [page,     setPage]     = React.useState(1);
   const [pageSize, setPageSize] = React.useState(100);
-  const [projView, setProjView] = React.useState("activity"); // "activity" | "deleted"
+  const [projView, setProjView] = React.useState("activity"); // "activity" | "deleted" | "settings"
   const loadedAt = React.useRef(null);
   const [lastUpdated, setLastUpdated] = React.useState("");
   const [exportOpen, setExportOpen] = React.useState(false);
@@ -826,6 +850,20 @@ function ProjectActivityApp() {
     dlBlob(`${projectKey || "project"}-history.xls`, "application/vnd.ms-excel", html);
   }
 
+  // ── Saved Reports: snapshot + restore ──────────────────────────────────
+  const currentFilters = { userF, keyF, fieldF, search, asc, daysInput };
+
+  function handleLoadReport(report) {
+    const f = report.filters || {};
+    if (f.userF       !== undefined) setUserF(f.userF);
+    if (f.keyF        !== undefined) setKeyF(f.keyF);
+    if (f.fieldF      !== undefined) setFieldF(f.fieldF);
+    if (f.search      !== undefined) setSearch(f.search);
+    if (f.asc         !== undefined) setAsc(f.asc);
+    if (f.daysInput   !== undefined) { setDaysInput(f.daysInput); loadData(parseInt(f.daysInput) || days); }
+    setPage(1);
+  }
+
   return (
     <div className="wih proj-page">
       <h2 className="proj-title">
@@ -844,11 +882,21 @@ function ProjectActivityApp() {
           onClick={() => setProjView("deleted")}>
           🗑️ Deleted Issues
         </button>
+        <button
+          className={`proj-tab${projView === "settings" ? " proj-tab-on" : ""}`}
+          onClick={() => setProjView("settings")}>
+          &#9881; Settings
+        </button>
       </div>
 
       {/* ── Deleted Issues view ── */}
       {projView === "deleted" && (
         <DeletedIssues projectKey={projectKey} />
+      )}
+
+      {/* ── Settings / Permissions view ── */}
+      {projView === "settings" && (
+        <AppPermissions projectKey={projectKey} />
       )}
 
       {/* ── Activity view ── */}
@@ -888,6 +936,11 @@ function ProjectActivityApp() {
               </ul>
             )}
           </div>
+          <SavedReports
+            currentFilters={currentFilters}
+            viewType="project"
+            onLoad={handleLoadReport}
+          />
         </div>
       </div>
 

@@ -372,30 +372,134 @@ resolver.define('saveReport', async (req) => {
   const { name, filters, viewType } = req.payload;
   const userId = req.context.accountId;
 
-  const report = {
-    id: `report-${Date.now()}`,
-    name,
-    userId,
-    filters,
-    viewType,
-    createdAt: new Date().toISOString()
-  };
+  // Fetch display name so reports can show the author's real name
+  let displayName = userId;
+  try {
+    const meRes = await api.asUser().requestJira(route`/rest/api/3/myself`);
+    const me = await meRes.json();
+    displayName = me.displayName || userId;
+  } catch (_) {}
 
-  await kvs.set(report.id, report);
+  const id = `report:${userId}:${Date.now()}`;
+  const report = { id, name, userId, displayName, filters, viewType, createdAt: new Date().toISOString() };
 
+  await kvs.set(id, report);
   return report;
 });
+
 resolver.define('getReports', async (req) => {
   const userId = req.context.accountId;
-
-  const res = await kvs.query().getMany();
-
-  return res.results
-    .map(r => r.value)
-    .filter(r => r.userId === userId);
+  // Use key prefix so we only scan this user's own reports
+  const res = await kvs.query().where('key', WhereConditions.beginsWith(`report:${userId}:`)).getMany();
+  const reports = (res.results || []).map(r => r.value).filter(Boolean);
+  reports.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  return reports;
 });
 resolver.define('deleteReport', async (req) => {
   await kvs.delete(req.payload.id);
+});
+
+// ── App Permissions resolvers ─────────────────────────────────────────────
+// Store per-project visibility rules for the history app.
+// Settings are keyed as `app_perms:{projectKey}` in KVS.
+
+resolver.define('getAppPermissions', async (req) => {
+  const projectKey = req.context?.extension?.project?.key || req.payload?.projectKey;
+  if (!projectKey) return { settings: null, isAdmin: false, error: 'No project key' };
+
+  let isAdmin = false;
+  try {
+    const permResp = await api.asUser().requestJira(
+      route`/rest/api/3/mypermissions?projectKey=${projectKey}&permissions=ADMINISTER_PROJECTS`
+    );
+    const perms = await permResp.json();
+    isAdmin = perms?.permissions?.ADMINISTER_PROJECTS?.havePermission === true;
+  } catch (_) {}
+
+  const stored = await kvs.get(`app_perms:${projectKey}`).catch(() => null);
+  const settings = stored || {
+    viewHistory:  'all',   // 'all' | 'admins_only'
+    viewDeleted:  'all',   // 'all' | 'admins_only'
+    exportHistory: 'all',  // 'all' | 'admins_only'
+  };
+
+  return { settings, isAdmin };
+});
+
+resolver.define('saveAppPermissions', async (req) => {
+  const { projectKey, settings } = req.payload || {};
+  if (!projectKey) return { success: false, error: 'No project key' };
+
+  let isAdmin = false;
+  try {
+    const permResp = await api.asUser().requestJira(
+      route`/rest/api/3/mypermissions?projectKey=${projectKey}&permissions=ADMINISTER_PROJECTS`
+    );
+    const perms = await permResp.json();
+    isAdmin = perms?.permissions?.ADMINISTER_PROJECTS?.havePermission === true;
+  } catch (_) {}
+
+  if (!isAdmin) return { success: false, error: 'Only project admins can change permissions' };
+
+  await kvs.set(`app_perms:${projectKey}`, {
+    viewHistory:   settings.viewHistory   || 'all',
+    viewDeleted:   settings.viewDeleted   || 'all',
+    exportHistory: settings.exportHistory || 'all',
+  });
+  return { success: true };
+});
+
+// ── Sharing Reports resolvers ─────────────────────────────────────────────
+// A "shared" report is stored under a shared: namespace so all users can read it.
+// The share token is the report id — any team member who has the id can load it.
+
+resolver.define('shareReport', async (req) => {
+  const { id } = req.payload || {};
+  if (!id) return { success: false, error: 'No report id provided' };
+
+  const report = await kvs.get(id).catch(() => null);
+  if (!report) return { success: false, error: 'Report not found' };
+
+  // Fetch sharer's display name so Team Reports can show "by <name>"
+  let sharedBy = report.displayName || report.userId || 'A teammate';
+  try {
+    const meRes = await api.asUser().requestJira(route`/rest/api/3/myself`);
+    const me = await meRes.json();
+    sharedBy = me.displayName || sharedBy;
+  } catch (_) {}
+
+  const sharedReport = { ...report, shared: true, sharedBy, sharedAt: new Date().toISOString() };
+
+  // Store under both the original key (owner still sees it) and a shared: key
+  await kvs.set(id, sharedReport);
+  await kvs.set(`shared:${id}`, sharedReport);
+
+  return { success: true, shareId: id };
+});
+
+resolver.define('loadSharedReport', async (req) => {
+  const { shareId } = req.payload || {};
+  if (!shareId) return { report: null, error: 'No shareId provided' };
+
+  // Try shared: namespace first, then the direct key
+  const report = (await kvs.get(`shared:${shareId}`).catch(() => null))
+              || (await kvs.get(shareId).catch(() => null));
+
+  if (!report) return { report: null, error: 'Shared report not found or no longer available' };
+  return { report };
+});
+
+resolver.define('getSharedReports', async () => {
+  // Returns all reports that have been explicitly shared (shared: true flag)
+  // so any user on the team can browse and load them.
+  try {
+    const res = await kvs.query().where('key', WhereConditions.beginsWith('shared:')).getMany();
+    const reports = (res.results || []).map(r => r.value).filter(Boolean);
+    reports.sort((a, b) => new Date(b.sharedAt || b.createdAt) - new Date(a.sharedAt || a.createdAt));
+    return { reports };
+  } catch (e) {
+    return { reports: [], error: e.message };
+  }
 });
 
 // ── Fetch all available Jira fields (system + custom) for the field filter dropdown ──
