@@ -502,6 +502,148 @@ resolver.define('getSharedReports', async () => {
   }
 });
 
+// ── Bulk Revert Changes ───────────────────────────────────────────────────────
+// Accepts an array of change rows and reverts each field back to its "from" value.
+// Supported fields: summary, priority, labels, status (via transitions).
+// Unsupported fields return a descriptive error so the UI can show partial results.
+
+resolver.define('revertChanges', async (req) => {
+  const { issueKey, changes } = req.payload || {};
+  if (!issueKey || !Array.isArray(changes) || changes.length === 0) {
+    return { results: [], error: 'Missing issueKey or changes' };
+  }
+
+  // Verify the caller has edit permission on this issue
+  let canEdit = false;
+  try {
+    const permResp = await api.asUser().requestJira(
+      route`/rest/api/3/mypermissions?issueKey=${issueKey}&permissions=EDIT_ISSUES`
+    );
+    const perms = await permResp.json();
+    canEdit = perms?.permissions?.EDIT_ISSUES?.havePermission === true;
+  } catch (_) {}
+
+  if (!canEdit) {
+    return {
+      results: changes.map(c => ({
+        field: c.field,
+        success: false,
+        error: 'You do not have Edit permission for this issue',
+      })),
+    };
+  }
+
+  const results      = [];
+  const fieldsPayload = {};
+  const statusItems  = [];
+
+  for (const change of changes) {
+    const fieldName = (change.field || '').toLowerCase().trim();
+    const fromVal   = change.from != null ? String(change.from) : '';
+
+    if (fieldName === 'summary') {
+      fieldsPayload['summary'] = fromVal;
+      results.push({ field: change.field, success: true });
+    } else if (fieldName === 'priority') {
+      fieldsPayload['priority'] = fromVal ? { name: fromVal } : null;
+      results.push({ field: change.field, success: true });
+    } else if (fieldName === 'labels') {
+      fieldsPayload['labels'] = fromVal ? fromVal.split(/[\s,]+/).filter(Boolean) : [];
+      results.push({ field: change.field, success: true });
+    } else if (fieldName === 'story points' || fieldName === 'story point estimate') {
+      const num = parseFloat(fromVal);
+      if (!isNaN(num)) {
+        fieldsPayload['story_points'] = num;
+        results.push({ field: change.field, success: true });
+      } else {
+        results.push({ field: change.field, success: false, error: 'Could not parse story point value' });
+      }
+    } else if (fieldName === 'status') {
+      statusItems.push({ field: change.field, fromVal });
+      // result pushed after transition attempt below
+    } else {
+      results.push({
+        field: change.field,
+        success: false,
+        error: 'Automatic revert is not supported for this field — please update it manually in Jira.',
+      });
+    }
+  }
+
+  // Apply simple field updates in one PUT call
+  if (Object.keys(fieldsPayload).length > 0) {
+    try {
+      const resp = await api.asUser().requestJira(
+        route`/rest/api/3/issue/${issueKey}`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fields: fieldsPayload }),
+        }
+      );
+      if (resp.status !== 204 && !resp.ok) {
+        let errText = `HTTP ${resp.status}`;
+        try {
+          const d = await resp.json();
+          errText = JSON.stringify(d.errors || d.errorMessages || d);
+        } catch (_) {}
+        // Mark the affected result entries as failed
+        for (let i = 0; i < results.length; i++) {
+          if (results[i].success && Object.keys(fieldsPayload).some(
+            k => results[i].field?.toLowerCase().includes(k.replace('_', ' '))
+          )) {
+            results[i] = { ...results[i], success: false, error: errText };
+          }
+        }
+      }
+    } catch (e) {
+      for (let i = 0; i < results.length; i++) {
+        if (results[i].success) results[i] = { ...results[i], success: false, error: e.message };
+      }
+    }
+  }
+
+  // Handle status transitions individually
+  for (const { field, fromVal } of statusItems) {
+    if (!fromVal) {
+      results.push({ field, success: false, error: 'No target status value to revert to' });
+      continue;
+    }
+    try {
+      const transResp = await api.asUser().requestJira(
+        route`/rest/api/3/issue/${issueKey}/transitions`
+      );
+      const transData = await transResp.json();
+      const match = (transData.transitions || []).find(
+        t => (t.to?.name || '').toLowerCase() === fromVal.toLowerCase()
+      );
+      if (!match) {
+        results.push({
+          field,
+          success: false,
+          error: `No transition to "${fromVal}" is available from the current status. You may need to revert it manually.`,
+        });
+        continue;
+      }
+      const postResp = await api.asUser().requestJira(
+        route`/rest/api/3/issue/${issueKey}/transitions`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ transition: { id: match.id } }),
+        }
+      );
+      const ok = postResp.status === 204 || postResp.ok;
+      results.push({ field, success: ok, error: ok ? null : `HTTP ${postResp.status}` });
+    } catch (e) {
+      results.push({ field, success: false, error: e.message });
+    }
+  }
+
+  console.log(`revertChanges for ${issueKey}: ${results.length} results`);
+  return { results, issueKey };
+});
+
 // ── Fetch all available Jira fields (system + custom) for the field filter dropdown ──
 resolver.define('fetchIssueFields', async () => {
   try {

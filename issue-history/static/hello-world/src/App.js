@@ -93,6 +93,7 @@ const STATUS_MAP = {
   "blocked": "#DE350B", "open": "#42526E",
 };
 function statusColor(v) { return STATUS_MAP[(v || "").toLowerCase()] || "#42526E"; }
+function rowId(r) { return `${r.ts}|${r.author}|${r.field}|${r.from}|${r.to}`; }
 
 function Av({ name }) {
   return (
@@ -358,6 +359,11 @@ function IssueActivityApp() {
     return () => document.removeEventListener("mousedown", h);
   }, []);
 
+  const [selectedIds,     setSelectedIds]     = React.useState(new Set());
+  const [showRevertModal, setShowRevertModal] = React.useState(false);
+  const [reverting,       setReverting]       = React.useState(false);
+  const [revertResults,   setRevertResults]   = React.useState(null);
+
   const load = React.useCallback(async () => {
     try {
       setLoading(true); setError(null);
@@ -440,7 +446,35 @@ function IssueActivityApp() {
   }, [allRows, dateF, customStart, customEnd, userF, fieldF, search, asc]);
 
   const hasFilter = dateF !== "any" || userF !== "any" || fieldF !== "any" || search;
-  const clearAll  = () => { setDateF("any"); setCustomStart(""); setCustomEnd(""); setUserF("any"); setFieldF("any"); setSearch(""); setPage(1); };
+  const clearAll  = () => { setDateF("any"); setCustomStart(""); setCustomEnd(""); setUserF("any"); setFieldF("any"); setSearch(""); setSelectedIds(new Set()); setPage(1); };
+
+  const selectedChanges = React.useMemo(
+    () => rows.filter(r => selectedIds.has(rowId(r))),
+    [rows, selectedIds]
+  );
+
+  async function handleBulkRevert() {
+    if (!selectedChanges.length || reverting) return;
+    setReverting(true);
+    setRevertResults(null);
+    try {
+      const res = await invoke("revertChanges", { issueKey, changes: selectedChanges });
+      const results = res.results || [];
+      setRevertResults(results);
+      if (results.length > 0 && results.every(r => r.success)) {
+        setTimeout(() => {
+          setShowRevertModal(false);
+          setRevertResults(null);
+          setSelectedIds(new Set());
+          load();
+        }, 1200);
+      }
+    } catch (e) {
+      setRevertResults([{ field: "All", success: false, error: e.message || "Revert failed" }]);
+    } finally {
+      setReverting(false);
+    }
+  }
 
   // "Last updated" ticker
   React.useEffect(() => {
@@ -550,11 +584,35 @@ function IssueActivityApp() {
         </div>
       )}
 
-      {!loading && !error && rows.length > 0 && viewMode === "table" && (
+      {!loading && !error && rows.length > 0 && viewMode === "table" && (<>
+        {selectedIds.size > 0 && (
+          <div className="bulk-bar">
+            <span className="bulk-bar-info">
+              {selectedIds.size} row{selectedIds.size !== 1 ? "s" : ""} selected
+            </span>
+            <button className="bulk-revert-btn" onClick={() => { setRevertResults(null); setShowRevertModal(true); }}>
+              &#8633; Revert Selected
+            </button>
+            <button className="clr-btn" onClick={() => setSelectedIds(new Set())}>&#10005; Clear</button>
+          </div>
+        )}
         <div className="tbl-wrap">
           <table className="tbl">
             <thead>
               <tr>
+                <th className="th-cb">
+                  <input
+                    type="checkbox"
+                    title="Select / deselect this page"
+                    checked={pagedRows.length > 0 && pagedRows.every(r => selectedIds.has(rowId(r)))}
+                    ref={el => { if (el) el.indeterminate = pagedRows.some(r => selectedIds.has(rowId(r))) && !pagedRows.every(r => selectedIds.has(rowId(r))); }}
+                    onChange={e => {
+                      const next = new Set(selectedIds);
+                      pagedRows.forEach(r => { e.target.checked ? next.add(rowId(r)) : next.delete(rowId(r)); });
+                      setSelectedIds(next);
+                    }}
+                  />
+                </th>
                 <th className="th-sort" onClick={() => { setAsc(v => !v); setPage(1); }}>
                   Date of change <span className="sort-ico">{asc ? "▲" : "▼"}</span>
                 </th>
@@ -564,23 +622,38 @@ function IssueActivityApp() {
               </tr>
             </thead>
             <tbody>
-              {pagedRows.map((r, i) => (
-                <tr key={i}>
-                  <td className="td-date">{fmtDate(r.ts)}</td>
-                  <td>
-                    <div className="user-cell">
-                      <Av name={r.author} />
-                      <span>{r.author}</span>
-                    </div>
-                  </td>
-                  <td className="td-field">{r.field || "\u2014"}</td>
-                  <td><Changes from={r.from} to={r.to} field={r.field} /></td>
-                </tr>
-              ))}
+              {pagedRows.map((r, i) => {
+                const id = rowId(r);
+                const checked = selectedIds.has(id);
+                return (
+                  <tr key={i} className={checked ? "tr-selected" : ""}>
+                    <td className="td-cb">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={e => {
+                          const next = new Set(selectedIds);
+                          e.target.checked ? next.add(id) : next.delete(id);
+                          setSelectedIds(next);
+                        }}
+                      />
+                    </td>
+                    <td className="td-date">{fmtDate(r.ts)}</td>
+                    <td>
+                      <div className="user-cell">
+                        <Av name={r.author} />
+                        <span>{r.author}</span>
+                      </div>
+                    </td>
+                    <td className="td-field">{r.field || "\u2014"}</td>
+                    <td><Changes from={r.from} to={r.to} field={r.field} /></td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
-      )}
+      </>)}
 
       {!loading && !error && fieldF !== "any" && viewMode === "stream" && (
         <div className="wih-filter-row">
@@ -636,6 +709,60 @@ function IssueActivityApp() {
               onKeyDown={e => { if (e.key === "Enter") { const v = parseInt(e.target.value); if (v >= 1 && v <= totalPages) { setPage(v); e.target.value = ""; } } }} />
             <button className="pg-go"
               onClick={e => { const inp = e.target.previousSibling; const v = parseInt(inp.value); if (v >= 1 && v <= totalPages) { setPage(v); inp.value = ""; } }}>Go&gt;</button>
+          </div>
+        </div>
+      )}
+      {/* Bulk Revert Confirmation Modal */}
+      {showRevertModal && (
+        <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) { setShowRevertModal(false); setRevertResults(null); } }}>
+          <div className="modal">
+            <div className="modal-header">
+              <span className="modal-title">&#8633; Revert {selectedChanges.length} Change{selectedChanges.length !== 1 ? "s" : ""}</span>
+              <button className="modal-close" onClick={() => { setShowRevertModal(false); setRevertResults(null); }}>&#10005;</button>
+            </div>
+            <div className="modal-body">
+              {!revertResults ? (
+                <>
+                  <ul className="revert-list">
+                    {selectedChanges.map((r, i) => (
+                      <li key={i} className="revert-list-item">
+                        <span className="revert-field-name">{r.field || "\u2014"}</span>
+                        <Changes from={r.to} to={r.from} field={r.field} />
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="revert-warning">
+                    &#9888; This will attempt to set each selected field back to its <strong>previous value</strong> on <strong>{issueKey}</strong>. The action uses your Jira credentials and cannot be undone automatically.
+                  </p>
+                </>
+              ) : (
+                <ul className="revert-list">
+                  {revertResults.map((r, i) => (
+                    <li key={i} className="revert-list-item">
+                      <span className="revert-field-name">{r.field || "\u2014"}</span>
+                      {r.success
+                        ? <span className="revert-result-ok">&#10004; Reverted successfully</span>
+                        : <span className="revert-result-err">&#10008; {r.error || "Failed"}</span>}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button className="ghost-btn" onClick={() => { setShowRevertModal(false); setRevertResults(null); }}>
+                {revertResults ? "Close" : "Cancel"}
+              </button>
+              {!revertResults && (
+                <button className="prim-btn" onClick={handleBulkRevert} disabled={reverting}>
+                  {reverting ? "Reverting\u2026" : "Confirm Revert"}
+                </button>
+              )}
+              {revertResults && revertResults.some(r => r.success) && (
+                <button className="prim-btn" onClick={() => { setShowRevertModal(false); setRevertResults(null); setSelectedIds(new Set()); load(); }}>
+                  Done
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
