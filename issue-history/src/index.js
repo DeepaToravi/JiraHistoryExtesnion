@@ -160,10 +160,15 @@ resolver.define('fetchProjectHistory', async (req) => {
     await Promise.all(batch.map(async (key) => {
       try {
         const resp = await api.asUser().requestJira(
-          route`/rest/api/3/issue/${key}?fields=summary&expand=changelog`
+          route`/rest/api/3/issue/${key}?fields=summary,assignee,customfield_10020&expand=changelog`
         );
         const data = await resp.json();
-        const summary = data.fields?.summary || issueSummaries[key] || '';
+        const summary  = data.fields?.summary || issueSummaries[key] || '';
+        const assignee = data.fields?.assignee?.displayName || '';
+        const sprintArr = data.fields?.customfield_10020;
+        const sprint = Array.isArray(sprintArr)
+          ? (sprintArr.slice(-1)[0]?.name || '')
+          : (sprintArr?.name || '');
         (data.changelog?.histories || []).forEach(h => {
           if (new Date(h.created).getTime() < sinceMs) return;
           const author = h.author?.displayName || '';
@@ -171,7 +176,7 @@ resolver.define('fetchProjectHistory', async (req) => {
           (h.items || []).forEach(it => {
             const fromVal = (it.fromString !== undefined && it.fromString !== null) ? it.fromString : (it.from || '');
             const toVal   = (typeof it['toString'] === 'string') ? it['toString'] : (it.to || '');
-            history.push({ timestamp: h.created, author, issueKey: key, summary, field: it.field || '', from: fromVal, to: toVal });
+            history.push({ timestamp: h.created, author, issueKey: key, summary, assignee, sprint, field: it.field || '', from: fromVal, to: toVal });
           });
         });
       } catch (e) {

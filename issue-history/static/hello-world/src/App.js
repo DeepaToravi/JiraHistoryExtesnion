@@ -900,9 +900,11 @@ function ProjectActivityApp() {
   const [projectName, setProjectName] = React.useState("");
   const [daysInput,   setDaysInput]   = React.useState("8");
   const [days,        setDays]        = React.useState(8);
-  const [userF,  setUserF]  = React.useState("any");
-  const [keyF,   setKeyF]   = React.useState([]);   // [] = any
-  const [fieldF, setFieldF] = React.useState("any");
+  const [userF,     setUserF]     = React.useState("any");
+  const [keyF,      setKeyF]      = React.useState([]);   // [] = any
+  const [fieldF,    setFieldF]    = React.useState("any");
+  const [assigneeF, setAssigneeF] = React.useState("any");
+  const [sprintF,   setSprintF]   = React.useState("any");
   const [search, setSearch] = React.useState("");
   const [asc,    setAsc]    = React.useState(false);
   const [page,     setPage]     = React.useState(1);
@@ -990,17 +992,29 @@ function ProjectActivityApp() {
     return [{ value: "any", label: "All Fields" }, ...Array.from(s).sort().map(f => ({ value: f, label: f }))];
   }, [allRows]);
 
+  const assigneeOpts = React.useMemo(() => {
+    const s = new Set(allRows.map(r => r.assignee).filter(Boolean));
+    return [{ value: "any", label: "Any Assignee" }, ...Array.from(s).sort().map(a => ({ value: a, label: a }))];
+  }, [allRows]);
+
+  const sprintOpts = React.useMemo(() => {
+    const s = new Set(allRows.map(r => r.sprint).filter(Boolean));
+    return [{ value: "any", label: "Any Sprint" }, ...Array.from(s).sort().map(sp => ({ value: sp, label: sp }))];
+  }, [allRows]);
+
   const rows = React.useMemo(() => {
     let r = allRows;
-    if (userF  !== "any")  r = r.filter(x => x.author === userF);
-    if (keyF.length > 0)   r = r.filter(x => keyF.includes(x.issueKey));
-    if (fieldF !== "any")  r = r.filter(x => x.field  === fieldF);
+    if (userF     !== "any") r = r.filter(x => x.author   === userF);
+    if (keyF.length > 0)    r = r.filter(x => keyF.includes(x.issueKey));
+    if (fieldF    !== "any") r = r.filter(x => x.field    === fieldF);
+    if (assigneeF !== "any") r = r.filter(x => x.assignee === assigneeF);
+    if (sprintF   !== "any") r = r.filter(x => x.sprint   === sprintF);
     if (search.trim()) {
       const q = search.toLowerCase();
       r = r.filter(x => (x.author + x.issueKey + x.summary + x.field + x.from + x.to).toLowerCase().includes(q));
     }
     return [...r].sort((a, b) => { const d = new Date(b.timestamp) - new Date(a.timestamp); return asc ? -d : d; });
-  }, [allRows, userF, keyF, fieldF, search, asc]);
+  }, [allRows, userF, keyF, fieldF, assigneeF, sprintF, search, asc]);
 
   const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
   const pagedRows  = rows.slice((page - 1) * pageSize, page * pageSize);
@@ -1032,13 +1046,15 @@ function ProjectActivityApp() {
   const canExport      = !perms || isAdmin || perms.exportHistory !== 'admins_only';
 
   // ── Saved Reports: snapshot + restore ──────────────────────────────────
-  const currentFilters = { userF, keyF, fieldF, search, asc, daysInput };
+  const currentFilters = { userF, keyF, fieldF, assigneeF, sprintF, search, asc, daysInput };
 
   function handleLoadReport(report) {
     const f = report.filters || {};
     if (f.userF       !== undefined) setUserF(f.userF);
     if (f.keyF        !== undefined) setKeyF(f.keyF);
     if (f.fieldF      !== undefined) setFieldF(f.fieldF);
+    if (f.assigneeF   !== undefined) setAssigneeF(f.assigneeF);
+    if (f.sprintF     !== undefined) setSprintF(f.sprintF);
     if (f.search      !== undefined) setSearch(f.search);
     if (f.asc         !== undefined) setAsc(f.asc);
     if (f.daysInput   !== undefined) { setDaysInput(f.daysInput); loadData(parseInt(f.daysInput) || days); }
@@ -1099,6 +1115,10 @@ function ProjectActivityApp() {
           </button>
           <DDMenu label="Updated by: " opts={userOpts} val={userF}
             onChange={v => { setUserF(v); setPage(1); }} searchable />
+          <DDMenu label="Assignee: " opts={assigneeOpts} val={assigneeF}
+            onChange={v => { setAssigneeF(v); setPage(1); }} searchable />
+          <DDMenu label="Sprint: " opts={sprintOpts} val={sprintF}
+            onChange={v => { setSprintF(v); setPage(1); }} />
           <span className="days-wrap">
             Within the last:
             <input className="days-inp" type="number" min="1" max="365"
