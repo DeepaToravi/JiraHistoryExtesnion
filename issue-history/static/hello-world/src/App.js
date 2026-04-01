@@ -364,6 +364,24 @@ function IssueActivityApp() {
   const [reverting,       setReverting]       = React.useState(false);
   const [revertResults,   setRevertResults]   = React.useState(null);
 
+  const [perms,   setPerms]   = React.useState(null);
+  const [isAdmin, setIsAdmin] = React.useState(false);
+
+  // Fetch export permission whenever we know the issue key
+  React.useEffect(() => {
+    if (!issueKey) return;
+    const projectKey = issueKey.split('-')[0];
+    invoke("getAppPermissions", { projectKey })
+      .then(res => {
+        setIsAdmin(res?.isAdmin || false);
+        setPerms(res?.settings || { viewHistory: 'all', viewDeleted: 'all', exportHistory: 'all' });
+      })
+      .catch(() => setPerms({ viewHistory: 'all', viewDeleted: 'all', exportHistory: 'all' }));
+  }, [issueKey]);
+
+  const canExport      = !perms || isAdmin || perms.exportHistory !== 'admins_only';
+  const canViewHistory = !perms || isAdmin || perms.viewHistory   !== 'admins_only';
+
   const load = React.useCallback(async () => {
     try {
       setLoading(true); setError(null);
@@ -541,17 +559,19 @@ function IssueActivityApp() {
               onChange={e => setSearch(e.target.value)} />
           </div>
 
-          <div className="dd-wrap" ref={exportRef}>
-            <button className="icon-btn" title="Export"
-              onClick={() => setExportOpen(v => !v)}>&#11015;</button>
-            {exportOpen && (
-              <ul className="dd-list align-r">
-                <li onClick={() => { doXLS(rows, issueKey); setExportOpen(false); }}>&#128202; Excel</li>
-                <li onClick={() => { doCSV(rows, issueKey); setExportOpen(false); }}>&#128196; CSV</li>
-                <li onClick={() => { doPDF(rows, issueKey); setExportOpen(false); }}>&#128203; PDF</li>
-              </ul>
-            )}
-          </div>
+          {canExport && (
+            <div className="dd-wrap" ref={exportRef}>
+              <button className="icon-btn" title="Export"
+                onClick={() => setExportOpen(v => !v)}>&#11015;</button>
+              {exportOpen && (
+                <ul className="dd-list align-r">
+                  <li onClick={() => { doXLS(rows, issueKey); setExportOpen(false); }}>&#128202; Excel</li>
+                  <li onClick={() => { doCSV(rows, issueKey); setExportOpen(false); }}>&#128196; CSV</li>
+                  <li onClick={() => { doPDF(rows, issueKey); setExportOpen(false); }}>&#128203; PDF</li>
+                </ul>
+              )}
+            </div>
+          )}
           <SavedReports
             currentFilters={currentFilters}
             viewType={viewMode}
@@ -560,14 +580,22 @@ function IssueActivityApp() {
         </div>
       </div>
 
-      {loading && (
+      {perms !== null && !canViewHistory && (
+        <div className="perm-denied">
+          <div className="perm-denied-ico">&#128274;</div>
+          <p className="perm-denied-title">Access Restricted</p>
+          <p className="perm-denied-sub">View Issue History is limited to project admins for this project.</p>
+        </div>
+      )}
+
+      {(perms === null || canViewHistory) && loading && (
         <div className="state-box">
           <div className="spinner"></div>
           <p>Loading history...</p>
         </div>
       )}
 
-      {!loading && error && (
+      {(perms === null || canViewHistory) && !loading && error && (
         <div className="err-box">
           <strong>Error loading history</strong>
           <p>{error}</p>
@@ -584,7 +612,7 @@ function IssueActivityApp() {
         </div>
       )}
 
-      {!loading && !error && rows.length > 0 && viewMode === "table" && (<>
+      {(perms === null || canViewHistory) && !loading && !error && rows.length > 0 && viewMode === "table" && (<>
         {selectedIds.size > 0 && (
           <div className="bulk-bar">
             <span className="bulk-bar-info">
@@ -655,7 +683,7 @@ function IssueActivityApp() {
         </div>
       </>)}
 
-      {!loading && !error && fieldF !== "any" && viewMode === "stream" && (
+      {(perms === null || canViewHistory) && !loading && !error && fieldF !== "any" && viewMode === "stream" && (
         <div className="wih-filter-row">
           <span className="field-chip">Field: <strong>{fieldF}</strong>
             <button className="field-chip-x" onClick={() => setFieldF("any")} title="Remove">&#10005;</button>
@@ -663,7 +691,7 @@ function IssueActivityApp() {
         </div>
       )}
 
-      {!loading && !error && rows.length > 0 && viewMode === "stream" && (
+      {(perms === null || canViewHistory) && !loading && !error && rows.length > 0 && viewMode === "stream" && (
         <div className="stream">
           {pagedRows.map((r, i) => (
             <div key={i} className="s-row">
@@ -686,11 +714,11 @@ function IssueActivityApp() {
           ))}
         </div>
       )}
-      {!loading && !error && rows.length > 0 && viewMode === "dashboard" && (
+      {(perms === null || canViewHistory) && !loading && !error && rows.length > 0 && viewMode === "dashboard" && (
   <AnalyticsDashboard rows={rows} isProject={false} />
 )}
 
-      {!loading && !error && rows.length > 0 && (
+      {(perms === null || canViewHistory) && !loading && !error && rows.length > 0 && (
         <div className="pg-footer">
           <span className="pg-updated">
             {lastUpdated ? `Last updated: ${lastUpdated}` : ""}

@@ -22,17 +22,53 @@ export default function SavedReports({ currentFilters, viewType, onLoad }) {
   const [showSaveForm, setShowSaveForm] = React.useState(false);
   const [reportName,   setReportName]   = React.useState("");
   const [toast,        setToast]        = React.useState(null);
-  const panelRef = React.useRef(null);
+  const [panelStyle,   setPanelStyle]   = React.useState({});
+  const panelRef   = React.useRef(null);
+  const triggerRef = React.useRef(null);
 
-  // Close panel when clicking outside
+  // Close panel when clicking outside (check both panel and trigger)
   React.useEffect(() => {
     if (!open) return;
     function handler(e) {
-      if (panelRef.current && !panelRef.current.contains(e.target)) setOpen(false);
+      const inPanel   = panelRef.current   && panelRef.current.contains(e.target);
+      const inTrigger = triggerRef.current && triggerRef.current.contains(e.target);
+      if (!inPanel && !inTrigger) setOpen(false);
     }
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
+
+  function togglePanel() {
+    if (open) { setOpen(false); return; }
+    if (triggerRef.current) {
+      const rect        = triggerRef.current.getBoundingClientRect();
+      const PANEL_W     = 340;
+      const PANEL_MAX_H = 400;
+      const GAP         = 6;
+      const spaceBelow  = window.innerHeight - rect.bottom - GAP;
+      const spaceAbove  = rect.top - GAP;
+      const right       = window.innerWidth - rect.right;
+
+      if (spaceBelow >= 180) {
+        // enough room below — open downward, cap height to available space
+        setPanelStyle({
+          top:       rect.bottom + GAP,
+          right,
+          width:     PANEL_W,
+          maxHeight: Math.min(PANEL_MAX_H, spaceBelow),
+        });
+      } else {
+        // open upward, cap height to space above
+        setPanelStyle({
+          bottom:    window.innerHeight - rect.top + GAP,
+          right,
+          width:     PANEL_W,
+          maxHeight: Math.min(PANEL_MAX_H, spaceAbove),
+        });
+      }
+    }
+    setOpen(true);
+  }
 
   // Load reports when panel opens or tab changes
   React.useEffect(() => {
@@ -102,7 +138,7 @@ export default function SavedReports({ currentFilters, viewType, onLoad }) {
   const displayReports = tab === "my" ? myReports : teamReports;
 
   return (
-    <div className="sr-wrap" ref={panelRef}>
+    <div className="sr-wrap">
       {/* Toast */}
       {toast && (
         <div className={`sr-toast${toast.ok ? " sr-toast-ok" : " sr-toast-err"}`}>
@@ -112,17 +148,18 @@ export default function SavedReports({ currentFilters, viewType, onLoad }) {
 
       {/* Trigger button */}
       <button
+        ref={triggerRef}
         className={`icon-btn sr-trigger${myReports.length > 0 ? " sr-has-reports" : ""}`}
         title="Saved Reports"
-        onClick={() => setOpen(v => !v)}
+        onClick={togglePanel}
       >
         &#128203;
         {myReports.length > 0 && <span className="sr-badge">{myReports.length}</span>}
       </button>
 
-      {/* Panel */}
+      {/* Panel — position:fixed, coordinates injected by togglePanel */}
       {open && (
-        <div className="sr-panel">
+        <div className="sr-panel" ref={panelRef} style={panelStyle}>
           <div className="sr-panel-header">
             <span className="sr-panel-title">Reports</span>
             <button className="sr-panel-close" onClick={() => setOpen(false)}>&#10005;</button>
