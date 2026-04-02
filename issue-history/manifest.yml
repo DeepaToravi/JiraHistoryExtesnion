@@ -13,6 +13,13 @@ modules:
       resolver:
         function: handler
 
+  jira:globalPage:
+    - key: issue-history-global-page
+      title: Issue History
+      resource: main
+      resolver:
+        function: handler
+
   jira:dashboardGadget:
     - key: issue-history-dashboard-gadget
       title: Issue History Gadget
@@ -62,6 +69,9 @@ permissions:
     - write:jira-work
     - read:jira-user
     - storage:app
+    - read:board-scope:jira-software
+    - read:project:jira
+    - read:sprint:jira-software
 
 app:
   id: ari:cloud:ecosystem::app/3f04a77b-b56f-4958-b226-98e6a5d447eb

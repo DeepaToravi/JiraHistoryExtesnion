@@ -1,4 +1,5 @@
 ﻿import AnalyticsDashboard from "./components/AnalyticsDashboard";
+import { DynamicStatusChart } from "./components/Charts";
 import DashboardGadget from "./components/DashboardGadget";
 import DeletedIssues from "./components/DeletedIssues";
 import SavedReports from "./components/SavedReports";
@@ -918,6 +919,11 @@ function ProjectActivityApp() {
   const [perms,   setPerms]   = React.useState(null); // null = not yet loaded
   const [isAdmin, setIsAdmin] = React.useState(false);
 
+  const [selectedIds,     setSelectedIds]     = React.useState(new Set());
+  const [showRevertModal, setShowRevertModal] = React.useState(false);
+  const [reverting,       setReverting]       = React.useState(false);
+  const [revertResults,   setRevertResults]   = React.useState(null);
+
   React.useEffect(() => {
     const h = e => { if (exportRef.current && !exportRef.current.contains(e.target)) setExportOpen(false); };
     document.addEventListener("mousedown", h);
@@ -1044,6 +1050,47 @@ function ProjectActivityApp() {
   const canViewHistory = !perms || isAdmin || perms.viewHistory  !== 'admins_only';
   const canViewDeleted = !perms || isAdmin || perms.viewDeleted  !== 'admins_only';
   const canExport      = !perms || isAdmin || perms.exportHistory !== 'admins_only';
+
+  const projRowId = r => `${r.timestamp}|${r.author}|${r.issueKey}|${r.field}|${r.from}|${r.to}`;
+
+  const selectedChanges = React.useMemo(
+    () => rows.filter(r => selectedIds.has(projRowId(r))),
+    [rows, selectedIds]
+  );
+
+  async function handleBulkRevert() {
+    if (!selectedChanges.length || reverting) return;
+    setReverting(true); setRevertResults(null);
+    try {
+      const byKey = {};
+      selectedChanges.forEach(r => {
+        if (!byKey[r.issueKey]) byKey[r.issueKey] = [];
+        byKey[r.issueKey].push(r);
+      });
+      const allResults = [];
+      await Promise.all(
+        Object.entries(byKey).map(async ([key, changes]) => {
+          try {
+            const res = await invoke("revertChanges", { issueKey: key, changes });
+            (res.results || []).forEach(result => allResults.push({ ...result, issueKey: key }));
+          } catch (e) {
+            changes.forEach(c => allResults.push({ field: c.field, issueKey: key, success: false, error: e.message || "Revert failed" }));
+          }
+        })
+      );
+      setRevertResults(allResults);
+      if (allResults.length > 0 && allResults.every(r => r.success)) {
+        setTimeout(() => {
+          setShowRevertModal(false); setRevertResults(null); setSelectedIds(new Set());
+          loadData(days);
+        }, 1200);
+      }
+    } catch (e) {
+      setRevertResults([{ field: "All", success: false, error: e.message || "Revert failed" }]);
+    } finally {
+      setReverting(false);
+    }
+  }
 
   // ── Saved Reports: snapshot + restore ──────────────────────────────────
   const currentFilters = { userF, keyF, fieldF, assigneeF, sprintF, search, asc, daysInput };
@@ -1177,11 +1224,35 @@ function ProjectActivityApp() {
         </div>
       )}
 
-      {!loading && !error && rows.length > 0 && (
+      {!loading && !error && rows.length > 0 && (<>
+        {selectedIds.size > 0 && (
+          <div className="bulk-bar">
+            <span className="bulk-bar-info">
+              {selectedIds.size} row{selectedIds.size !== 1 ? "s" : ""} selected
+            </span>
+            <button className="bulk-revert-btn" onClick={() => { setRevertResults(null); setShowRevertModal(true); }}>
+              &#8633; Revert Selected
+            </button>
+            <button className="clr-btn" onClick={() => setSelectedIds(new Set())}>&#10005; Clear</button>
+          </div>
+        )}
         <div className="tbl-wrap">
           <table className="tbl">
             <thead>
               <tr>
+                <th className="th-cb">
+                  <input
+                    type="checkbox"
+                    title="Select / deselect this page"
+                    checked={pagedRows.length > 0 && pagedRows.every(r => selectedIds.has(projRowId(r)))}
+                    ref={el => { if (el) el.indeterminate = pagedRows.some(r => selectedIds.has(projRowId(r))) && !pagedRows.every(r => selectedIds.has(projRowId(r))); }}
+                    onChange={e => {
+                      const next = new Set(selectedIds);
+                      pagedRows.forEach(r => { e.target.checked ? next.add(projRowId(r)) : next.delete(projRowId(r)); });
+                      setSelectedIds(next);
+                    }}
+                  />
+                </th>
                 <th className="th-sort" onClick={() => { setAsc(v => !v); setPage(1); }}>
                   Date of change <span className="sort-ico">{asc ? "▲" : "▼"}</span>
                 </th>
@@ -1199,29 +1270,44 @@ function ProjectActivityApp() {
               </tr>
             </thead>
             <tbody>
-              {pagedRows.map((r, i) => (
-                <tr key={i}>
-                  <td className="td-date">{fmtDate(r.timestamp)}</td>
-                  <td>
-                    <a className="key-link"
-                      href={`/browse/${r.issueKey}`}
-                      target="_blank" rel="noreferrer">{r.issueKey}</a>
-                  </td>
-                  <td className="td-summary">{r.summary}</td>
-                  <td>
-                    <div className="user-cell">
-                      <Av name={r.author} />
-                      <span>{r.author}</span>
-                    </div>
-                  </td>
-                  <td className="td-field">{r.field || "—"}</td>
-                  <td><Changes from={r.from} to={r.to} field={r.field} /></td>
-                </tr>
-              ))}
+              {pagedRows.map((r, i) => {
+                const id = projRowId(r);
+                const checked = selectedIds.has(id);
+                return (
+                  <tr key={i} className={checked ? "tr-selected" : ""}>
+                    <td className="td-cb">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={e => {
+                          const next = new Set(selectedIds);
+                          e.target.checked ? next.add(id) : next.delete(id);
+                          setSelectedIds(next);
+                        }}
+                      />
+                    </td>
+                    <td className="td-date">{fmtDate(r.timestamp)}</td>
+                    <td>
+                      <a className="key-link"
+                        href={`/browse/${r.issueKey}`}
+                        target="_blank" rel="noreferrer">{r.issueKey}</a>
+                    </td>
+                    <td className="td-summary">{r.summary}</td>
+                    <td>
+                      <div className="user-cell">
+                        <Av name={r.author} />
+                        <span>{r.author}</span>
+                      </div>
+                    </td>
+                    <td className="td-field">{r.field || "—"}</td>
+                    <td><Changes from={r.from} to={r.to} field={r.field} /></td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
-      )}
+      </>)}
 
       {!loading && !error && rows.length > 0 && (
         <div className="pg-footer">
@@ -1240,7 +1326,1031 @@ function ProjectActivityApp() {
           </div>
         </div>
       )}
+      {/* Bulk Revert Confirmation Modal */}
+      {showRevertModal && (
+        <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) { setShowRevertModal(false); setRevertResults(null); } }}>
+          <div className="modal">
+            <div className="modal-header">
+              <span className="modal-title">&#8633; Revert {selectedChanges.length} Change{selectedChanges.length !== 1 ? "s" : ""}</span>
+              <button className="modal-close" onClick={() => { setShowRevertModal(false); setRevertResults(null); }}>&#10005;</button>
+            </div>
+            <div className="modal-body">
+              {!revertResults ? (
+                <>
+                  <ul className="revert-list">
+                    {selectedChanges.map((r, i) => (
+                      <li key={i} className="revert-list-item">
+                        <span className="revert-field-name">{r.issueKey} &mdash; {r.field || "\u2014"}</span>
+                        <Changes from={r.to} to={r.from} field={r.field} />
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="revert-warning">
+                    &#9888; This will attempt to set each selected field back to its <strong>previous value</strong>. Changes span multiple work items and cannot be undone automatically.
+                  </p>
+                </>
+              ) : (
+                <ul className="revert-list">
+                  {revertResults.map((r, i) => (
+                    <li key={i} className="revert-list-item">
+                      <span className="revert-field-name">{r.issueKey} &mdash; {r.field || "\u2014"}</span>
+                      {r.success
+                        ? <span className="revert-result-ok">&#10004; Reverted successfully</span>
+                        : <span className="revert-result-err">&#10008; {r.error || "Failed"}</span>}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button className="ghost-btn" onClick={() => { setShowRevertModal(false); setRevertResults(null); }}>
+                {revertResults ? "Close" : "Cancel"}
+              </button>
+              {!revertResults && (
+                <button className="prim-btn" onClick={handleBulkRevert} disabled={reverting}>
+                  {reverting ? "Reverting\u2026" : "Confirm Revert"}
+                </button>
+              )}
+              {revertResults && revertResults.some(r => r.success) && (
+                <button className="prim-btn" onClick={() => { setShowRevertModal(false); setRevertResults(null); setSelectedIds(new Set()); loadData(days); }}>
+                  Done
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       </>))}
+    </div>
+  );
+}
+
+// ── Global Page App ────────────────────────────────────────────────────────
+function GlPriorityBadge({ v }) {
+  const map = {
+    highest: { color: "#FF5630", icon: "▲▲" },
+    high:    { color: "#FF7452", icon: "▲"  },
+    medium:  { color: "#FF8B00", icon: "—"  },
+    low:     { color: "#2684FF", icon: "▼"  },
+    lowest:  { color: "#0065FF", icon: "▼▼" },
+  };
+  const s = map[(v || "").toLowerCase()] || { color: "#6B778C", icon: "—" };
+  return <span style={{ color: s.color, fontWeight: 600, whiteSpace: "nowrap", fontSize: "0.85em" }}>{s.icon} {v || "—"}</span>;
+}
+
+const GL_SELECT_MODES = [
+  { value: "space",    label: "Space"              },
+  { value: "assignee", label: "Assignee"           },
+  { value: "reporter", label: "Reporter"           },
+  { value: "label",    label: "Label"              },
+  { value: "sprint",   label: "Sprint"             },
+  { value: "filter",   label: "Filter"             },
+  { value: "jql",      label: "JQL"                },
+  { value: "deleted",  label: "Deleted work items" },
+];
+
+function GlColHeaderFilter({ label, opts, val, onChange }) {
+  const [open, setOpen] = React.useState(false);
+  const ref = React.useRef(null);
+  React.useEffect(() => {
+    const h = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
+  const active = val !== "any";
+  return (
+    <span className={`fh-wrap${active ? " fh-on" : ""}`} ref={ref} style={{ display: "inline-block", position: "relative" }}>
+      <button className={`fh-btn${active ? " fh-active" : ""}`}
+        onClick={e => { e.stopPropagation(); setOpen(v => !v); }}
+        title={active ? `Filtering: ${val}` : `Filter by ${label}`}>&#9783;</button>
+      {active && (
+        <button className="fh-clear" onClick={e => { e.stopPropagation(); onChange("any"); }} title="Clear">&#10005;</button>
+      )}
+      {open && (
+        <ul className="fh-list" style={{ minWidth: 140 }}>
+          {opts.map(o => (
+            <li key={o.value} className={o.value === val ? "dd-active" : ""}
+              onClick={e => { e.stopPropagation(); onChange(o.value); setOpen(false); }}>
+              {o.label}
+            </li>
+          ))}
+        </ul>
+      )}
+    </span>
+  );
+}
+
+// Full-page cross-project history — exact marketplace feature parity.
+function GlobalPageApp() {
+  const [history,    setHistory]    = React.useState([]);
+  const [projects,   setProjects]   = React.useState([]);
+  const [loading,    setLoading]    = React.useState(true);
+  const [error,      setError]      = React.useState(null);
+
+  // ── Select-mode state ────────────────────────────────────────────────────
+  const [selectMode,      setSelectMode]      = React.useState("space"); // space|assignee|reporter|label|sprint|filter|jql|deleted
+  const [projectKey,      setProjectKey]      = React.useState("all");   // space mode
+  const [jqlText,         setJqlText]         = React.useState("");       // jql mode
+  const [secondaryVal,    setSecondaryVal]    = React.useState("");       // assignee/reporter id OR label/sprint text OR filterId
+  const [secondaryLabel,  setSecondaryLabel]  = React.useState("");       // display name for assignee/reporter/filter
+  const [userSuggestions, setUserSuggestions] = React.useState([]);
+  const [userSugLoading,  setUserSugLoading]  = React.useState(false);
+  const [savedFilters,    setSavedFilters]    = React.useState([]);
+  const [showSecMenu,     setShowSecMenu]     = React.useState(false);
+  const [labelOptions,    setLabelOptions]    = React.useState([]);
+  const [sprintOptions,   setSprintOptions]   = React.useState([]);
+  const [secSearch,       setSecSearch]       = React.useState("");
+
+  // ── Server-fetch params ──────────────────────────────────────────────────
+  const [days,      setDays]      = React.useState(30);
+  const [daysInput, setDaysInput] = React.useState("30");
+  const [keepDeleted, setKeepDeleted] = React.useState(false);
+
+  // ── Client-side filters ──────────────────────────────────────────────────
+  const [userF,       setUserF]       = React.useState("any");
+  const [priorityF,   setPriorityF]   = React.useState("any");
+  const [statusF,     setStatusF]     = React.useState("any");
+  const [dateF,       setDateF]       = React.useState("any");
+  const [customStart, setCustomStart] = React.useState("");
+  const [customEnd,   setCustomEnd]   = React.useState("");
+  const [sortAsc,     setSortAsc]     = React.useState(false);
+
+  // ── View mode ────────────────────────────────────────────────────────────
+  const [viewMode, setViewMode] = React.useState("table"); // table | people | chart
+
+  // ── UI state ─────────────────────────────────────────────────────────────
+  const [showModeMenu,  setShowModeMenu]  = React.useState(false);
+  const [showProjMenu,  setShowProjMenu]  = React.useState(false);
+  const [showUserMenu,  setShowUserMenu]  = React.useState(false);
+  const [userSearch,    setUserSearch]    = React.useState("");
+  const [exportOpen,    setExportOpen]    = React.useState(false);
+  const [page,          setPage]          = React.useState(1);
+  const [pageSize,      setPageSize]      = React.useState(10);
+  const [datePickerOpen,  setDatePickerOpen]  = React.useState(false);
+  const [collapsedKeys,   setCollapsedKeys]   = React.useState(new Set());
+  const [visibleCols,     setVisibleCols]     = React.useState(new Set(["date","updater","key","issuetype","summary","priority","status","field","changes"]));
+  const [showColPicker,   setShowColPicker]   = React.useState(false);
+  const loadedAt      = React.useRef(null);
+  const [lastUpdated, setLastUpdated] = React.useState("");
+  const userSearchTimer = React.useRef(null);
+
+  const [glSelectedIds,     setGlSelectedIds]     = React.useState(new Set());
+  const [glShowRevertModal, setGlShowRevertModal] = React.useState(false);
+  const [glReverting,       setGlReverting]       = React.useState(false);
+  const [glRevertResults,   setGlRevertResults]   = React.useState(null);
+
+  const exportRef    = React.useRef(null);
+  const colPickerRef = React.useRef(null);
+  const modeMenuRef  = React.useRef(null);
+  const projMenuRef  = React.useRef(null);
+  const userMenuRef  = React.useRef(null);
+  const secMenuRef   = React.useRef(null);
+
+  // Close on outside click
+  React.useEffect(() => {
+    const handlers = [
+      [exportRef,    () => setExportOpen(false)],
+      [colPickerRef, () => setShowColPicker(false)],
+      [modeMenuRef,  () => setShowModeMenu(false)],
+      [projMenuRef,  () => setShowProjMenu(false)],
+      [userMenuRef,  () => { setShowUserMenu(false); setUserSearch(""); }],
+      [secMenuRef,   () => setShowSecMenu(false)],
+    ];
+    const h = e => handlers.forEach(([ref, fn]) => { if (ref.current && !ref.current.contains(e.target)) fn(); });
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
+
+  // Last-updated ticker
+  React.useEffect(() => {
+    function tick() {
+      if (!loadedAt.current) { setLastUpdated(""); return; }
+      const s = Math.floor((Date.now() - loadedAt.current) / 1000);
+      if (s < 5)         setLastUpdated("now");
+      else if (s < 60)   setLastUpdated(`${s} seconds ago`);
+      else if (s < 3600) { const m = Math.floor(s / 60); setLastUpdated(`${m} minute${m !== 1 ? "s" : ""} ago`); }
+      else               { const h = Math.floor(s / 3600); setLastUpdated(`${h} hour${h !== 1 ? "s" : ""} ago`); }
+    }
+    tick();
+    const id = setInterval(tick, 10000);
+    return () => clearInterval(id);
+  }, [history]);
+
+  // Load saved filters when mode becomes "filter"
+  React.useEffect(() => {
+    if (selectMode !== "filter" || savedFilters.length > 0) return;
+    invoke("fetchSavedFilters").then(r => setSavedFilters(r.filters || [])).catch(() => {});
+  }, [selectMode, savedFilters.length]);
+
+  // Load labels when mode becomes "label"
+  React.useEffect(() => {
+    if (selectMode !== "label" || labelOptions.length > 0) return;
+    invoke("fetchJiraLabels").then(r => setLabelOptions(r.labels || [])).catch(() => {});
+  }, [selectMode, labelOptions.length]);
+
+  // Load sprints when mode becomes "sprint"
+  React.useEffect(() => {
+    if (selectMode !== "sprint" || sprintOptions.length > 0) return;
+    invoke("fetchJiraSprints").then(r => setSprintOptions((r.sprints || []).map(s => s.name))).catch(() => {});
+  }, [selectMode, sprintOptions.length]);
+
+  // Debounced user suggestions for assignee/reporter
+  function fetchUserSuggestions(q) {
+    if (!q.trim()) { setUserSuggestions([]); return; }
+    if (userSearchTimer.current) clearTimeout(userSearchTimer.current);
+    userSearchTimer.current = setTimeout(() => {
+      setUserSugLoading(true);
+      invoke("searchJiraUsers", { query: q })
+        .then(r => { setUserSuggestions(r.users || []); setUserSugLoading(false); })
+        .catch(() => setUserSugLoading(false));
+    }, 300);
+  }
+
+  // Build JQL based on current select mode.
+  // Returns only the WHERE/filter clause — no ORDER BY — because fetchGadgetHistory appends that.
+  function buildJql(daysVal) {
+    const d = daysVal !== undefined ? daysVal : days;
+    const since = new Date(); since.setDate(since.getDate() - d);
+    const sinceStr = since.toISOString().slice(0, 10);
+    const datePart = `updated >= "${sinceStr}"`;
+    switch (selectMode) {
+      case "space":
+        return projectKey === "all"
+          ? datePart
+          : `project = "${projectKey}" AND ${datePart}`;
+      case "jql":
+        // user-supplied JQL — pass through as-is; backend will use it directly
+        return jqlText.trim() || datePart;
+      case "assignee":
+        return secondaryVal
+          ? `assignee = "${secondaryVal}" AND ${datePart}`
+          : datePart;
+      case "reporter":
+        return secondaryVal
+          ? `reporter = "${secondaryVal}" AND ${datePart}`
+          : datePart;
+      case "label":
+        return secondaryVal.trim()
+          ? `labels = "${secondaryVal.trim()}" AND ${datePart}`
+          : datePart;
+      case "sprint":
+        return secondaryVal.trim()
+          ? `sprint = "${secondaryVal.trim()}" AND ${datePart}`
+          : datePart;
+      case "filter":
+        return secondaryVal
+          ? `filter = "${secondaryVal}" AND ${datePart}`
+          : datePart;
+      default:
+        return datePart;
+    }
+  }
+
+  // Core load function
+  const load = React.useCallback((daysVal) => {
+    const d = daysVal !== undefined ? daysVal : days;
+
+    // Deleted mode — fetch from KVS
+    if (selectMode === "deleted") {
+      setLoading(true); setError(null);
+      invoke("fetchDeletedIssues", { projectKey: "all" })
+        .then(res => {
+          const hist = (res.issues || []).map(iss => ({
+            timestamp:  iss.deletedAt || "",
+            author:     iss.deletedBy || "",
+            issueKey:   iss.issueKey  || "",
+            summary:    iss.summary   || "",
+            issueType:  iss.issueType || "",
+            priority:   iss.priority  || "",
+            status:     iss.status    || "",
+            projectKey: iss.projectKey || iss.issueKey?.split("-")[0] || "",
+            field:      "deleted",
+            from:       "Active",
+            to:         "Deleted",
+          }));
+          setHistory(hist);
+          setProjects([...new Set(hist.map(r => r.projectKey).filter(Boolean))].sort());
+          loadedAt.current = Date.now();
+          setPage(1);
+          setLoading(false);
+        })
+        .catch(e => { setError(e.message || "Failed to load deleted issues"); setLoading(false); });
+      return;
+    }
+
+    setLoading(true); setError(null);
+    invoke("fetchGadgetHistory", { days: d, jqlMode: "jql", jqlText: buildJql(d), currentUserOnly: false })
+      .then(res => {
+        let hist = res.history || [];
+        setProjects(res.projects || []);
+        if (keepDeleted) {
+          invoke("fetchDeletedIssues", { projectKey: "all" }).then(dr => {
+            const del = (dr.issues || []).map(iss => ({
+              timestamp:  iss.deletedAt || "", author: iss.deletedBy || "",
+              issueKey:   iss.issueKey  || "", summary: iss.summary  || "",
+              issueType:  iss.issueType || "", priority: iss.priority || "",
+              status:     iss.status    || "", projectKey: iss.projectKey || iss.issueKey?.split("-")[0] || "",
+              field: "deleted", from: "Active", to: "Deleted",
+            }));
+            const merged = [...hist, ...del].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+            setHistory(merged);
+            loadedAt.current = Date.now();
+            setPage(1);
+          }).catch(() => { setHistory(hist); loadedAt.current = Date.now(); setPage(1); });
+        } else {
+          setHistory(hist);
+          loadedAt.current = Date.now();
+          setPage(1);
+        }
+        setLoading(false);
+      })
+      .catch(e => { setError(e.message || "Failed to load"); setLoading(false); });
+  }, [selectMode, days, projectKey, jqlText, secondaryVal, keepDeleted]);
+
+  React.useEffect(() => { load(); }, [load]);
+
+  function applyDays() {
+    const v = parseInt(daysInput);
+    if (!isNaN(v) && v > 0) { setDays(v); load(v); }
+    else setDaysInput(String(days));
+  }
+
+  // ── Derived data ─────────────────────────────────────────────────────────
+  const uniqueUsers = React.useMemo(() => {
+    const s = new Set(history.map(r => r.author).filter(Boolean));
+    return Array.from(s).sort();
+  }, [history]);
+
+  const priorityOpts = React.useMemo(() => {
+    const s = new Set(history.map(r => r.priority).filter(Boolean));
+    return [{ value: "any", label: "Any" }, ...Array.from(s).sort().map(v => ({ value: v, label: v }))];
+  }, [history]);
+
+  const statusOpts = React.useMemo(() => {
+    const s = new Set(history.map(r => r.status).filter(Boolean));
+    return [{ value: "any", label: "Any" }, ...Array.from(s).sort().map(v => ({ value: v, label: v }))];
+  }, [history]);
+
+  const filteredRows = React.useMemo(() => {
+    let r = history;
+    if (userF     !== "any") r = r.filter(x => x.author   === userF);
+    if (priorityF !== "any") r = r.filter(x => x.priority === priorityF);
+    if (statusF   !== "any") r = r.filter(x => x.status   === statusF);
+    if (dateF     !== "any") r = r.filter(x => matchDate(x.timestamp, dateF, customStart, customEnd));
+    if (sortAsc)   r = [...r].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+    return r;
+  }, [history, userF, priorityF, statusF, dateF, customStart, customEnd, sortAsc]);
+
+  const grouped = React.useMemo(() => {
+    const order = [], map = {};
+    filteredRows.forEach(r => {
+      if (!map[r.issueKey]) { map[r.issueKey] = []; order.push(r.issueKey); }
+      map[r.issueKey].push(r);
+    });
+    return order.map(k => ({
+      issueKey:  k,
+      summary:   map[k][0]?.summary   || "",
+      issueType: map[k][0]?.issueType || "",
+      priority:  map[k][0]?.priority  || "",
+      status:    map[k][0]?.status    || "",
+      rows:      map[k],
+    }));
+  }, [filteredRows]);
+
+  const pagedItems  = viewMode === "table"
+    ? grouped.slice((page - 1) * pageSize, page * pageSize)
+    : filteredRows.slice((page - 1) * pageSize, page * pageSize);
+  const totalItems  = viewMode === "table" ? grouped.length : filteredRows.length;
+  const totalPages  = Math.max(1, Math.ceil(totalItems / pageSize));
+
+  const logsOnPage = viewMode === "table"
+    ? pagedItems.reduce((n, g) => n + (collapsedKeys.has(g.issueKey) ? 1 : g.rows.length), 0)
+    : pagedItems.length;
+
+  const dateBtnLabel = React.useMemo(() => {
+    if (dateF !== "custom") return DATE_OPTS.find(o => o.value === dateF)?.label || "Any dates";
+    const fmt = v => v ? new Date(v).toLocaleDateString("en-GB", { day:"2-digit", month:"short", year:"numeric" }) : "";
+    if (customStart && customEnd) return `${fmt(customStart)} – ${fmt(customEnd)}`;
+    if (customStart) return `From ${fmt(customStart)}`;
+    if (customEnd)   return `Until ${fmt(customEnd)}`;
+    return "Custom range";
+  }, [dateF, customStart, customEnd]);
+
+  function doExportCSV() {
+    const h = ["Date of change","Key","Issue Type","Summary","Priority","Status","Updated by","Field","From","To"];
+    const q = v => `"${String(v||"").replace(/"/g,'""')}"`;
+    const csv = [h, ...filteredRows.map(r => [fmtDate(r.timestamp),r.issueKey,r.issueType,r.summary,r.priority,r.status,r.author,r.field,r.from,r.to])]
+      .map(row => row.map(q).join(",")).join("\r\n");
+    dlBlob("issue-history.csv","text/csv;charset=utf-8;","\uFEFF"+csv);
+  }
+  function doExportXLS() {
+    const h = ["Date of change","Key","Issue Type","Summary","Priority","Status","Updated by","Field","From","To"];
+    const x = v => String(v||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    const html = `<html><head><meta charset="UTF-8"></head><body><table border="1"><thead><tr>${h.map(c=>`<th>${c}</th>`).join("")}</tr></thead><tbody>${filteredRows.map(r=>`<tr>${[fmtDate(r.timestamp),r.issueKey,r.issueType,r.summary,r.priority,r.status,r.author,r.field,r.from,r.to].map(v=>`<td>${x(v)}</td>`).join("")}</tr>`).join("")}</tbody></table></body></html>`;
+    dlBlob("issue-history.xls","application/vnd.ms-excel",html);
+  }
+
+  const modeLabel = GL_SELECT_MODES.find(m => m.value === selectMode)?.label || "Space";
+  const PAGE_SIZE_OPTS = [{value:10,label:"10"},{value:25,label:"25"},{value:50,label:"50"},{value:100,label:"100"}];
+
+  // ── Secondary input based on current select mode ─────────────────────────
+  function renderSecondaryInput() {
+    if (selectMode === "space") {
+      return (
+        <div className="dd-wrap" ref={projMenuRef} style={{ position:"relative" }}>
+          <button className="dd-btn" onClick={() => setShowProjMenu(v => !v)}>
+            <span>{projectKey === "all" ? "All work items" : projectKey}</span>
+            <span className="dd-arrow">&#9660;</span>
+          </button>
+          {showProjMenu && (
+            <ul className="dd-list">
+              <li className={projectKey==="all"?"dd-active":""} onClick={() => { setProjectKey("all"); setShowProjMenu(false); }}>All work items</li>
+              {projects.map(p => (
+                <li key={p} className={projectKey===p?"dd-active":""} onClick={() => { setProjectKey(p); setShowProjMenu(false); }}>{p}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      );
+    }
+    if (selectMode === "jql") {
+      return (
+        <input className="gad-jql-input" style={{ minWidth: 280 }}
+          placeholder="e.g. project = KAN AND priority = High"
+          value={jqlText} onChange={e => setJqlText(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && load()} />
+      );
+    }
+    if (selectMode === "assignee" || selectMode === "reporter") {
+      return (
+        <div className="dd-wrap" ref={secMenuRef} style={{ position:"relative" }}>
+          <input className="gad-jql-input" style={{ minWidth: 200 }}
+            placeholder={selectMode === "assignee" ? "Search assignee…" : "Search reporter…"}
+            value={secondaryLabel}
+            onChange={e => {
+              setSecondaryLabel(e.target.value);
+              setSecondaryVal(e.target.value);
+              fetchUserSuggestions(e.target.value);
+              setShowSecMenu(true);
+            }}
+          />
+          {showSecMenu && (userSuggestions.length > 0 || userSugLoading) && (
+            <ul className="dd-list">
+              {userSugLoading && <li style={{ padding:"6px 12px", color:"#888" }}>Searching…</li>}
+              {userSuggestions.map(u => (
+                <li key={u.accountId} onClick={() => {
+                  setSecondaryVal(u.accountId);
+                  setSecondaryLabel(u.displayName);
+                  setShowSecMenu(false);
+                  setUserSuggestions([]);
+                }}>{u.displayName}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      );
+    }
+    if (selectMode === "label" || selectMode === "sprint") {
+      const opts = selectMode === "label" ? labelOptions : sprintOptions;
+      const placeholder = selectMode === "label" ? "Select label…" : "Select sprint…";
+      const filteredOpts = secSearch.trim()
+        ? opts.filter(o => o.toLowerCase().includes(secSearch.toLowerCase()))
+        : opts;
+      return (
+        <div className="dd-wrap" ref={secMenuRef} style={{ position: "relative" }}>
+          <button className="dd-btn" onClick={() => { setSecSearch(""); setShowSecMenu(v => !v); }}>
+            <span>{secondaryVal || placeholder}</span>
+            <span className="dd-arrow">&#9660;</span>
+          </button>
+          {secondaryVal && (
+            <button className="fh-clear" title="Clear"
+              onClick={e => { e.stopPropagation(); setSecondaryVal(""); setSecondaryLabel(""); load(); }}
+              style={{ position:"absolute", right:24, top:"50%", transform:"translateY(-50%)", zIndex:2 }}>&#10005;</button>
+          )}
+          {showSecMenu && (
+            <div className="dd-list" style={{ minWidth: 220, padding: "4px 0" }}>
+              {opts.length > 6 && (
+                <div style={{ padding: "4px 8px" }} onClick={e => e.stopPropagation()}>
+                  <input className="dd-search-inp" placeholder="Search…" autoFocus
+                    value={secSearch} onChange={e => setSecSearch(e.target.value)} />
+                </div>
+              )}
+              <ul style={{ listStyle:"none", margin:0, padding:0, maxHeight:220, overflowY:"auto" }}>
+                <li style={{ padding:"6px 12px", cursor:"pointer", color:"#888" }}
+                  className={secondaryVal === "" ? "dd-active" : ""}
+                  onClick={() => { setSecondaryVal(""); setSecondaryLabel(""); setShowSecMenu(false); setSecSearch(""); load(); }}
+                >Any {selectMode}</li>
+                {filteredOpts.map(o => (
+                  <li key={o}
+                    className={secondaryVal === o ? "dd-active" : ""}
+                    style={{ padding:"6px 12px", cursor:"pointer" }}
+                    onClick={() => { setSecondaryVal(o); setSecondaryLabel(o); setShowSecMenu(false); setSecSearch(""); }}>
+                    {o}
+                  </li>
+                ))}
+                {filteredOpts.length === 0 && (
+                  <li style={{ padding:"6px 12px", color:"#888", fontStyle:"italic" }}>
+                    {opts.length === 0 ? "Loading…" : `No results for "${secSearch}"`}
+                  </li>
+                )}
+              </ul>
+            </div>
+          )}
+        </div>
+      );
+    }
+    if (selectMode === "filter") {
+      return (
+        <div className="dd-wrap" ref={secMenuRef} style={{ position:"relative" }}>
+          <button className="dd-btn" onClick={() => setShowSecMenu(v => !v)}>
+            <span>{savedFilters.find(f => f.id === secondaryVal)?.name || "Select filter…"}</span>
+            <span className="dd-arrow">&#9660;</span>
+          </button>
+          {showSecMenu && (
+            <ul className="dd-list">
+              {savedFilters.length === 0 && <li style={{ padding:"6px 12px", color:"#888" }}>No saved filters found</li>}
+              {savedFilters.map(f => (
+                <li key={f.id} className={secondaryVal===f.id?"dd-active":""}
+                  onClick={() => { setSecondaryVal(f.id); setSecondaryLabel(f.name); setShowSecMenu(false); }}>
+                  {f.name}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      );
+    }
+    if (selectMode === "deleted") {
+      return <span style={{ fontSize:"0.85em", color:"#DE350B", fontWeight:600 }}>Showing all deleted work items</span>;
+    }
+    return null;
+  }
+
+  const glRowId = r => `${r.timestamp}|${r.author}|${r.issueKey}|${r.field}|${r.from}|${r.to}`;
+
+  // All visible change-rows across every page (respects collapse state) — used for computing selected changes
+  const glAllGroupedRows = React.useMemo(() => {
+    return grouped.flatMap(g => collapsedKeys.has(g.issueKey) ? [g.rows[0]] : g.rows);
+  }, [grouped, collapsedKeys]);
+
+  // Rows visible on the current page — used for the page-level "select all" checkbox
+  const glAllVisiblePageRows = React.useMemo(() => {
+    return pagedItems.flatMap(group =>
+      collapsedKeys.has(group.issueKey) ? [group.rows[0]] : group.rows
+    );
+  }, [pagedItems, collapsedKeys]);
+
+  const glSelectedChanges = React.useMemo(
+    () => glAllGroupedRows.filter(r => glSelectedIds.has(glRowId(r))),
+    [glAllGroupedRows, glSelectedIds]
+  );
+
+  async function handleGlBulkRevert() {
+    if (!glSelectedChanges.length || glReverting) return;
+    setGlReverting(true); setGlRevertResults(null);
+    try {
+      const byKey = {};
+      glSelectedChanges.forEach(r => {
+        if (!byKey[r.issueKey]) byKey[r.issueKey] = [];
+        byKey[r.issueKey].push(r);
+      });
+      const allResults = [];
+      await Promise.all(
+        Object.entries(byKey).map(async ([key, changes]) => {
+          try {
+            const res = await invoke("revertChanges", { issueKey: key, changes });
+            (res.results || []).forEach(result => allResults.push({ ...result, issueKey: key }));
+          } catch (e) {
+            changes.forEach(c => allResults.push({ field: c.field, issueKey: key, success: false, error: e.message || "Revert failed" }));
+          }
+        })
+      );
+      setGlRevertResults(allResults);
+      if (allResults.length > 0 && allResults.every(r => r.success)) {
+        setTimeout(() => {
+          setGlShowRevertModal(false); setGlRevertResults(null); setGlSelectedIds(new Set());
+          load();
+        }, 1200);
+      }
+    } catch (e) {
+      setGlRevertResults([{ field: "All", success: false, error: e.message || "Revert failed" }]);
+    } finally {
+      setGlReverting(false);
+    }
+  }
+
+  return (
+    <div className="wih proj-page">
+      <h2 className="proj-title">Issue History</h2>
+
+      {/* ── Toolbar row 1: select mode + secondary + updated by + save view ── */}
+      <div className="proj-bar" style={{ flexWrap:"wrap", gap:"6px", alignItems:"center", marginBottom:6 }}>
+        <div className="proj-bar-l" style={{ flexWrap:"wrap", gap:"6px", alignItems:"center" }}>
+
+          {/* Select work items by */}
+          <div className="dd-wrap" ref={modeMenuRef} style={{ position:"relative" }}>
+            <button className="dd-btn" onClick={() => setShowModeMenu(v => !v)}>
+              <span className="dd-prefix">Select work items by: </span>
+              <span>{modeLabel}</span><span className="dd-arrow">&#9660;</span>
+            </button>
+            {showModeMenu && (
+              <ul className="dd-list">
+                {GL_SELECT_MODES.map(m => (
+                  <li key={m.value} className={selectMode===m.value?"dd-active":""}
+                    onClick={() => { setSelectMode(m.value); setSecondaryVal(""); setSecondaryLabel(""); setShowModeMenu(false); setPage(1); }}>
+                    {m.label}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          {/* Secondary input */}
+          {renderSecondaryInput()}
+
+          {/* Updated by */}
+          <div className="dd-wrap" ref={userMenuRef} style={{ position:"relative" }}>
+            <button className="dd-btn" onClick={() => setShowUserMenu(v => !v)}>
+              <span className="dd-prefix">Updated by: </span>
+              <span>{userF !== "any" ? userF : "Any User"}</span>
+              <span className="dd-arrow">&#9660;</span>
+            </button>
+            {showUserMenu && (
+              <div className="dd-list" style={{ minWidth:220, padding:"4px 0" }}>
+                <div style={{ padding:"4px 8px" }}>
+                  <input className="dd-search-inp" placeholder="Search users…" autoFocus
+                    value={userSearch} onChange={e => setUserSearch(e.target.value)} />
+                </div>
+                <ul style={{ listStyle:"none", margin:0, padding:0, maxHeight:220, overflowY:"auto" }}>
+                  <li className={userF==="any"?"dd-active":""} style={{ padding:"6px 12px", cursor:"pointer" }}
+                    onClick={() => { setUserF("any"); setShowUserMenu(false); setUserSearch(""); setPage(1); }}>Any User</li>
+                  {uniqueUsers
+                    .filter(u => !userSearch.trim() || u.toLowerCase().includes(userSearch.toLowerCase()))
+                    .map(u => (
+                      <li key={u} className={userF===u?"dd-active":""} style={{ padding:"6px 12px", cursor:"pointer" }}
+                        onClick={() => { setUserF(u); setShowUserMenu(false); setUserSearch(""); setPage(1); }}>{u}</li>
+                    ))}
+                  {userSearch.trim() && uniqueUsers.filter(u => u.toLowerCase().includes(userSearch.toLowerCase())).length === 0 && (
+                    <li style={{ padding:"6px 12px", color:"#888", fontStyle:"italic" }}>No users found</li>
+                  )}
+                </ul>
+              </div>
+            )}
+          </div>
+
+          {/* Save View */}
+          <SavedReports
+            currentFilters={{ selectMode, projectKey, jqlText, secondaryVal, secondaryLabel, days, userF, priorityF, statusF, dateF, customStart, customEnd, sortAsc, viewMode }}
+            viewType="global"
+            onLoad={r => {
+              const f = r.filters || {};
+              if (f.selectMode    !== undefined) setSelectMode(f.selectMode);
+              if (f.projectKey    !== undefined) setProjectKey(f.projectKey);
+              if (f.jqlText       !== undefined) setJqlText(f.jqlText);
+              if (f.secondaryVal  !== undefined) setSecondaryVal(f.secondaryVal);
+              if (f.secondaryLabel!== undefined) setSecondaryLabel(f.secondaryLabel);
+              if (f.days          !== undefined) { setDays(f.days); setDaysInput(String(f.days)); }
+              if (f.userF         !== undefined) setUserF(f.userF);
+              if (f.priorityF     !== undefined) setPriorityF(f.priorityF);
+              if (f.statusF       !== undefined) setStatusF(f.statusF);
+              if (f.dateF         !== undefined) setDateF(f.dateF);
+              if (f.customStart   !== undefined) setCustomStart(f.customStart);
+              if (f.customEnd     !== undefined) setCustomEnd(f.customEnd);
+              if (f.sortAsc       !== undefined) setSortAsc(f.sortAsc);
+              if (f.viewMode      !== undefined) setViewMode(f.viewMode);
+              setPage(1);
+            }}
+          />
+        </div>
+      </div>
+
+      {/* ── Toolbar row 2: view modes + count + date range + days + deleted toggle + export + columns ── */}
+      <div className="proj-bar" style={{ flexWrap:"wrap", gap:"6px", alignItems:"center" }}>
+        <div className="proj-bar-l" style={{ flexWrap:"wrap", gap:"6px", alignItems:"center" }}>
+          {/* View toggles */}
+          <div className="vt">
+            <button className={`vt-btn${viewMode==="table" ?" on":""}`} onClick={() => setViewMode("table")}  title="Table view">&#9776;</button>
+            <button className={`vt-btn${viewMode==="stream"?" on":""}`} onClick={() => setViewMode("stream")} title="Activity stream">&#931;&#931;</button>
+            <button className={`vt-btn${viewMode==="chart" ?" on":""}`} onClick={() => setViewMode("chart")}  title="Chart view">&#128200;</button>
+          </div>
+
+          {!loading && (
+            <span className="cnt">
+              {filteredRows.length} change{filteredRows.length!==1?"s":""} &middot; {grouped.length} issue{grouped.length!==1?"s":""}
+            </span>
+          )}
+
+          <button className="icon-btn" onClick={() => load()} disabled={loading} title="Refresh">
+            <span className={loading?"spin-ico":""}>&#8635;</span>
+          </button>
+
+          {/* Date range */}
+          <DateFilter opts={DATE_OPTS} val={dateF} label={dateBtnLabel}
+            onChange={v => { setDateF(v); if (v!=="custom") { setCustomStart(""); setCustomEnd(""); } setPage(1); }}
+            customStart={customStart} customEnd={customEnd}
+            onCustomStart={setCustomStart} onCustomEnd={setCustomEnd}
+            onOpenChange={setDatePickerOpen} />
+
+          {/* Within last N days */}
+          <span className="days-wrap">
+            Within the last:
+            <input className="days-inp" type="number" min="1" max="365" value={daysInput}
+              onChange={e => setDaysInput(e.target.value)}
+              onBlur={applyDays}
+              onKeyDown={e => e.key==="Enter" && applyDays()} />
+            days
+          </span>
+        </div>
+
+        <div className="proj-bar-r">
+          {/* Keep deleted toggle */}
+          {selectMode !== "deleted" && (
+            <label style={{ display:"flex", alignItems:"center", gap:6, fontSize:"0.85em", cursor:"pointer", userSelect:"none" }}>
+              <span>Keep deleted work items</span>
+              <span onClick={() => setKeepDeleted(v => !v)}
+                style={{ display:"inline-block", width:36, height:20, borderRadius:10, cursor:"pointer",
+                  background: keepDeleted ? "#0052CC" : "#DFE1E6", position:"relative", transition:"background 0.2s" }}>
+                <span style={{ position:"absolute", top:3, left: keepDeleted ? 18 : 3,
+                  width:14, height:14, borderRadius:"50%", background:"#fff", transition:"left 0.2s" }} />
+              </span>
+            </label>
+          )}
+
+          {/* Export */}
+          <div className="dd-wrap" ref={exportRef}>
+            <button className="icon-btn" title="Export" onClick={() => setExportOpen(v => !v)}>
+              &#11015; Export &#9660;
+            </button>
+            {exportOpen && (
+              <ul className="dd-list align-r">
+                <li onClick={() => { doExportXLS(); setExportOpen(false); }}>&#128202; Excel</li>
+                <li onClick={() => { doExportCSV(); setExportOpen(false); }}>&#128196; CSV</li>
+              </ul>
+            )}
+          </div>
+
+          {/* Columns */}
+          <div className="dd-wrap" ref={colPickerRef} style={{ position:"relative" }}>
+            <button className="icon-btn" title="Columns" onClick={() => setShowColPicker(v => !v)}>
+              &#9776; Columns
+            </button>
+            {showColPicker && (
+              <div className="kf-panel" style={{ right:0, left:"auto", width:190 }}>
+                <ul className="kf-list">
+                  {[
+                    { k:"date",      l:"Date of change" },
+                    { k:"updater",   l:"Updated by"     },
+                    { k:"key",       l:"Key"            },
+                    { k:"issuetype", l:"Issue Type"     },
+                    { k:"summary",   l:"Summary"        },
+                    { k:"priority",  l:"Priority"       },
+                    { k:"status",    l:"Status"         },
+                    { k:"field",     l:"Field"          },
+                    { k:"changes",   l:"Changes"        },
+                  ].map(({ k, l }) => {
+                    const on = visibleCols.has(k);
+                    return (
+                      <li key={k} className={`kf-item${on?" kf-checked":""}`}
+                        onClick={() => setVisibleCols(prev => {
+                          const next = new Set(prev);
+                          if (next.has(k)) { if (next.size > 1) next.delete(k); } else next.add(k);
+                          return next;
+                        })}>
+                        <span className={`kf-cb${on?" on":""}`}>{on?"✔":""}</span>
+                        <span className="kf-lbl">{l}</span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Loading / Error / Empty ── */}
+      {loading && <div className="state-box"><div className="spinner"></div><p>Loading activity…</p></div>}
+      {!loading && error && (
+        <div className="err-box">
+          <strong>Error loading history</strong><p>{error}</p>
+          <button className="prim-btn" onClick={() => load()}>Retry</button>
+        </div>
+      )}
+      {!loading && !error && filteredRows.length === 0 && (
+        <div className="state-box">
+          <div className="empty-ico">&#128203;</div>
+          <p className="empty-title">No activity found</p>
+          <p className="empty-sub">Try increasing the days range or changing the filters.</p>
+        </div>
+      )}
+
+      {/* ── Chart view ── */}
+      {!loading && !error && filteredRows.length > 0 && viewMode === "chart" && (
+        <div className="charts-wrap">
+          <DynamicStatusChart rows={filteredRows.map(r => ({
+            ts:       r.timestamp,
+            issueKey: r.issueKey,
+            field:    r.field,
+            from:     r.from,
+            to:       r.to,
+            status:   r.status,
+          }))} />
+        </div>
+      )}
+
+      {/* ── Stream (activity) view ── */}
+      {!loading && !error && filteredRows.length > 0 && viewMode === "stream" && (
+        <div className="stream">
+          {pagedItems.map((r, i) => (
+            <div key={i} className="s-row">
+              <Av name={r.author} />
+              <div className="s-body">
+                <div className="s-head">
+                  <strong>{r.author}</strong>
+                  {r.field
+                    ? <span> {r.from && r.to ? "changed" : r.to ? "updated" : "cleared"} the <em>{r.field}</em> on <a className="key-link" href={`/browse/${r.issueKey}`} target="_blank" rel="noreferrer">{r.issueKey}</a></span>
+                    : <span> made a change on <a className="key-link" href={`/browse/${r.issueKey}`} target="_blank" rel="noreferrer">{r.issueKey}</a></span>}
+                  <span className="s-when"> {fmtDate(r.timestamp)}</span>
+                </div>
+                {r.summary && <div style={{ fontSize:"0.82em", color:"#5E6C84", marginBottom:2 }}>{r.summary}</div>}
+                {(r.from || r.to) && (
+                  <div className="s-change">
+                    <Changes from={r.from} to={r.to} field={r.field} />
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── Table view ── */}
+      {!loading && !error && filteredRows.length > 0 && viewMode === "table" && (<>
+        {glSelectedIds.size > 0 && (
+          <div className="bulk-bar">
+            <span className="bulk-bar-info">
+              {glSelectedIds.size} row{glSelectedIds.size !== 1 ? "s" : ""} selected
+            </span>
+            <button className="bulk-revert-btn" onClick={() => { setGlRevertResults(null); setGlShowRevertModal(true); }}>
+              &#8633; Revert Selected
+            </button>
+            <button className="clr-btn" onClick={() => setGlSelectedIds(new Set())}>&#10005; Clear</button>
+          </div>
+        )}
+        <div className="tbl-wrap">
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th className="th-cb">
+                  <input
+                    type="checkbox"
+                    title="Select / deselect visible rows on this page"
+                    checked={glAllVisiblePageRows.length > 0 && glAllVisiblePageRows.every(r => glSelectedIds.has(glRowId(r)))}
+                    ref={el => { if (el) el.indeterminate = glAllVisiblePageRows.some(r => glSelectedIds.has(glRowId(r))) && !glAllVisiblePageRows.every(r => glSelectedIds.has(glRowId(r))); }}
+                    onChange={e => {
+                      const next = new Set(glSelectedIds);
+                      glAllVisiblePageRows.forEach(r => { e.target.checked ? next.add(glRowId(r)) : next.delete(glRowId(r)); });
+                      setGlSelectedIds(next);
+                    }}
+                  />
+                </th>
+                <th style={{ width:28 }}></th>
+                {visibleCols.has("date")      && <th className="th-sort" onClick={() => { setSortAsc(v => !v); setPage(1); }}>Date of change <span className="sort-ico">{sortAsc?"▲":"▼"}</span></th>}
+                {visibleCols.has("updater")   && <th>Updated by</th>}
+                {visibleCols.has("key")       && <th>Key</th>}
+                {visibleCols.has("issuetype") && <th>Issue Type</th>}
+                {visibleCols.has("summary")   && <th>Summary</th>}
+                {visibleCols.has("priority")  && <th>Priority <GlColHeaderFilter label="priority" opts={priorityOpts} val={priorityF} onChange={v => { setPriorityF(v); setPage(1); }} /></th>}
+                {visibleCols.has("status")    && <th>Status <GlColHeaderFilter label="status" opts={statusOpts} val={statusF} onChange={v => { setStatusF(v); setPage(1); }} /></th>}
+                {visibleCols.has("field")     && <th>Field</th>}
+                {visibleCols.has("changes")   && <th>Changes</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {pagedItems.map(group => {
+                const isCollapsed = collapsedKeys.has(group.issueKey);
+                const rowsToShow  = isCollapsed ? [group.rows[0]] : group.rows;
+                return rowsToShow.map((r, ri) => {
+                  const rid = glRowId(r);
+                  const checked = glSelectedIds.has(rid);
+                  return (
+                    <tr key={`${group.issueKey}-${ri}`} className={`${ri > 0 ? "gl-subrow" : ""}${checked ? " tr-selected" : ""}`}>
+                      <td className="td-cb">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={e => {
+                            const next = new Set(glSelectedIds);
+                            e.target.checked ? next.add(rid) : next.delete(rid);
+                            setGlSelectedIds(next);
+                          }}
+                        />
+                      </td>
+                      <td style={{ width:28, textAlign:"center", verticalAlign:"middle", paddingRight:0 }}>
+                        {ri === 0 && group.rows.length > 1 && (
+                          <button style={{ background:"none", border:"none", cursor:"pointer", padding:"2px 4px", color:"#42526E", fontSize:"0.7em" }}
+                            title={isCollapsed?"Expand":"Collapse"}
+                            onClick={() => setCollapsedKeys(prev => {
+                              const next = new Set(prev);
+                              next.has(group.issueKey) ? next.delete(group.issueKey) : next.add(group.issueKey);
+                              return next;
+                            })}>
+                            {isCollapsed ? "▶" : "▼"}
+                          </button>
+                        )}
+                      </td>
+                      {visibleCols.has("date")      && <td className="td-date">{fmtDate(r.timestamp)}</td>}
+                      {visibleCols.has("updater")   && <td><div className="user-cell"><Av name={r.author}/><span>{r.author}</span></div></td>}
+                      {visibleCols.has("key")       && <td><a className="key-link" href={`/browse/${r.issueKey}`} target="_blank" rel="noreferrer">{r.issueKey}</a></td>}
+                      {visibleCols.has("issuetype") && <td className="td-field">{group.issueType || "—"}</td>}
+                      {visibleCols.has("summary")   && <td className="td-summary">{group.summary}</td>}
+                      {visibleCols.has("priority")  && <td><GlPriorityBadge v={group.priority}/></td>}
+                      {visibleCols.has("status")    && <td>{group.status ? <span className="status-badge" style={{ background: statusColor(group.status) }}>{group.status.toUpperCase()}</span> : "—"}</td>}
+                      {visibleCols.has("field")     && <td className="td-field">{r.field || "—"}</td>}
+                      {visibleCols.has("changes")   && <td><Changes from={r.from} to={r.to} field={r.field}/></td>}
+                    </tr>
+                  );
+                });
+              })}
+            </tbody>
+          </table>
+        </div>
+      </>)}
+
+      {/* ── Footer ── */}
+      {!loading && !error && totalItems > 0 && (
+        <div className="pg-footer">
+          <span className="pg-updated">
+            {lastUpdated ? `Last updated: ${lastUpdated}` : ""}
+            {lastUpdated ? " · " : ""}Logs on this page: {logsOnPage}
+          </span>
+          <div className="pg-controls">
+            <span className="pg-label">Work items per page:</span>
+            <DDMenu opts={PAGE_SIZE_OPTS} val={pageSize} onChange={v => { setPageSize(Number(v)); setPage(1); }} alignRight />
+            <button className="pg-nav" disabled={page<=1} onClick={() => setPage(p => p-1)}>&#8249;</button>
+            <span className="pg-num">{page}</span>
+            <button className="pg-nav" disabled={page>=totalPages} onClick={() => setPage(p => p+1)}>&#8250;</button>
+            <input className="pg-jump" type="number" min="1" max={totalPages} placeholder={String(totalPages)}
+              onKeyDown={e => { if (e.key==="Enter") { const v=parseInt(e.target.value); if(v>=1&&v<=totalPages){setPage(v);e.target.value="";} }}} />
+            <button className="pg-go" onClick={e => { const inp=e.target.previousSibling; const v=parseInt(inp.value); if(v>=1&&v<=totalPages){setPage(v);inp.value="";} }}>Go&gt;</button>
+          </div>
+        </div>
+      )}
+      {/* Bulk Revert Confirmation Modal */}
+      {glShowRevertModal && (
+        <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) { setGlShowRevertModal(false); setGlRevertResults(null); } }}>
+          <div className="modal">
+            <div className="modal-header">
+              <span className="modal-title">&#8633; Revert {glSelectedChanges.length} Change{glSelectedChanges.length !== 1 ? "s" : ""}</span>
+              <button className="modal-close" onClick={() => { setGlShowRevertModal(false); setGlRevertResults(null); }}>&#10005;</button>
+            </div>
+            <div className="modal-body">
+              {!glRevertResults ? (
+                <>
+                  <ul className="revert-list">
+                    {glSelectedChanges.map((r, i) => (
+                      <li key={i} className="revert-list-item">
+                        <span className="revert-field-name">{r.issueKey} &mdash; {r.field || "\u2014"}</span>
+                        <Changes from={r.to} to={r.from} field={r.field} />
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="revert-warning">
+                    &#9888; This will attempt to set each selected field back to its <strong>previous value</strong>. Changes span multiple work items and cannot be undone automatically.
+                  </p>
+                </>
+              ) : (
+                <ul className="revert-list">
+                  {glRevertResults.map((r, i) => (
+                    <li key={i} className="revert-list-item">
+                      <span className="revert-field-name">{r.issueKey} &mdash; {r.field || "\u2014"}</span>
+                      {r.success
+                        ? <span className="revert-result-ok">&#10004; Reverted successfully</span>
+                        : <span className="revert-result-err">&#10008; {r.error || "Failed"}</span>}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button className="ghost-btn" onClick={() => { setGlShowRevertModal(false); setGlRevertResults(null); }}>
+                {glRevertResults ? "Close" : "Cancel"}
+              </button>
+              {!glRevertResults && (
+                <button className="prim-btn" onClick={handleGlBulkRevert} disabled={glReverting}>
+                  {glReverting ? "Reverting\u2026" : "Confirm Revert"}
+                </button>
+              )}
+              {glRevertResults && glRevertResults.some(r => r.success) && (
+                <button className="prim-btn" onClick={() => { setGlShowRevertModal(false); setGlRevertResults(null); setGlSelectedIds(new Set()); load(); }}>
+                  Done
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      {datePickerOpen && <div aria-hidden="true" className="date-picker-spacer" />}
     </div>
   );
 }
@@ -1252,7 +2362,9 @@ function App() {
     forgeView.getContext()
       .then(ctx => {
         const mk = ctx?.moduleKey || "";
-        if (mk === "issue-history-dashboard-gadget") {
+        if (mk === "issue-history-global-page") {
+          setMode("global");
+        } else if (mk === "issue-history-dashboard-gadget") {
           setMode("gadget");
         } else if (ctx && ctx.extension && ctx.extension.project && !ctx.extension.issue) {
           setMode("project");
@@ -1262,6 +2374,7 @@ function App() {
       })
       .catch(() => setMode("issue"));
   }, []);
+  if (mode === "global")  return <GlobalPageApp />;
   if (mode === "gadget")  return <DashboardGadget />;
   if (mode === "project") return <ProjectActivityApp />;
   if (mode === "issue")   return <IssueActivityApp />;

@@ -130,6 +130,126 @@ export function StatusTimelineChart({ rows }) {
   );
 }
 
+// ── Dynamic Status Update Chart ──────────────────────────────────────────
+// For each calendar day, shows a snapshot of how many issues were in each
+// status at END of that day. Reconstructed by walking backwards from the
+// current (known) status using status-change events.
+export function DynamicStatusChart({ rows }) {
+  const allIssueKeys = [...new Set(rows.map(r => r.issueKey).filter(Boolean))];
+  if (!allIssueKeys.length) return null;
+
+  // Collect all status-change events per issue, sorted OLDEST FIRST
+  // Each event: { ts, from, to }
+  const statusEvents = {};
+  rows.forEach(r => {
+    if ((r.field || "").toLowerCase() !== "status") return;
+    const ts = new Date(r.ts || r.timestamp).getTime();
+    if (isNaN(ts)) return;
+    if (!statusEvents[r.issueKey]) statusEvents[r.issueKey] = [];
+    statusEvents[r.issueKey].push({ ts, from: r.from || "", to: r.to || "" });
+  });
+  Object.values(statusEvents).forEach(arr => arr.sort((a, b) => a.ts - b.ts));
+
+  // Date range from all rows
+  const allTimes = rows.map(r => new Date(r.ts || r.timestamp).getTime()).filter(n => !isNaN(n));
+  if (!allTimes.length) return null;
+  const minTime = Math.min(...allTimes);
+  const maxTime = Math.max(...allTimes);
+
+  // One entry per calendar day (ascending)
+  const days = [];
+  const cur = new Date(minTime); cur.setHours(0, 0, 0, 0);
+  const end = new Date(maxTime); end.setHours(23, 59, 59, 999);
+  while (cur <= end) { days.push(new Date(cur)); cur.setDate(cur.getDate() + 1); }
+  if (!days.length) return null;
+
+  // For each issue on each day:
+  //   Filter status events where event.ts <= end-of-day
+  //   If any exist → pick the latest one's "to" value
+  //   If none exist → "To Do" (true initial state, not current API status)
+  const statusSet       = new Set();
+  const dayStatusCounts = days.map(() => ({}));
+
+  allIssueKeys.forEach(key => {
+    const events = statusEvents[key] || [];  // oldest first
+
+    days.forEach((day, di) => {
+      const dayEndMs = day.getTime() + 86399999;
+
+      // Latest event on or before this day
+      let status = "To Do";
+      for (let i = events.length - 1; i >= 0; i--) {
+        if (events[i].ts <= dayEndMs) {
+          status = events[i].to || "To Do";
+          break;
+        }
+      }
+      // If issue has events but ALL are in the future → use the first event's "from"
+      // (what it was before its first recorded change)
+      if (events.length > 0 && events[0].ts > dayEndMs) {
+        status = events[0].from || "To Do";
+      }
+
+      statusSet.add(status);
+      dayStatusCounts[di][status] = (dayStatusCounts[di][status] || 0) + 1;
+    });
+  });
+
+  const STATUS_COLORS = {
+    "to do":       "#42526E", "todo":        "#42526E",
+    "in progress": "#0052CC", "inprogress":  "#0052CC",
+    "in review":   "#6554C0", "inreview":    "#6554C0",
+    "done":        "#36B37E",
+    "closed":      "#36B37E", "resolved":    "#36B37E",
+    "blocked":     "#FF5630",
+  };
+  const getColor = s => STATUS_COLORS[(s || "").toLowerCase()] || "#8993A4";
+
+  const statuses = Array.from(statusSet);
+  const labels   = days.map(d => d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }));
+  const datasets  = statuses.map(s => ({
+    label:           s,
+    data:            dayStatusCounts.map(dc => dc[s] || 0),
+    backgroundColor: getColor(s),
+    borderRadius:    2,
+    stack:           "status",
+  }));
+
+  const options = {
+    responsive: true,
+    plugins: {
+      legend: { position: "bottom", labels: { font: { size: 11 }, boxWidth: 12 } },
+      tooltip: {
+        mode: "index",
+        intersect: false,
+        callbacks: { label: ctx => ` ${ctx.dataset.label}: ${ctx.parsed.y}` },
+      },
+      title: {
+        display: true,
+        text: "Dynamic status update",
+        font: { size: 14, weight: "600" },
+        padding: { bottom: 12 },
+        color: "#172B4D",
+      },
+    },
+    scales: {
+      x: { stacked: true, grid: { display: false }, ticks: { font: { size: 11 } } },
+      y: {
+        stacked: true,
+        ticks:   { stepSize: 1 },
+        grid:    { color: "#F4F5F7" },
+        title:   { display: true, text: "Work items state count", font: { size: 11 } },
+      },
+    },
+  };
+
+  return (
+    <div className="chart-box" style={{ gridColumn: "1 / -1" }}>
+      <Bar data={{ labels, datasets }} options={options} />
+    </div>
+  );
+}
+
 // ── Default Charts export (general analytics) ────────────────────────────
 export default function Charts({ rows }) {
 

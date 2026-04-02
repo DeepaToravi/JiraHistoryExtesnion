@@ -198,17 +198,23 @@ resolver.define('fetchDeletedIssues', async (req) => {
 
   // Check if the current user is a project admin or site admin
   let isAdmin = false;
-  try {
-    const permResp = await api.asUser().requestJira(
-      route`/rest/api/3/mypermissions?projectKey=${projectKey}&permissions=ADMINISTER_PROJECTS`
-    );
-    const perms = await permResp.json();
-    isAdmin = perms?.permissions?.ADMINISTER_PROJECTS?.havePermission === true;
-  } catch (_) {}
+  const isAll = projectKey === 'all';
+  if (!isAll) {
+    try {
+      const permResp = await api.asUser().requestJira(
+        route`/rest/api/3/mypermissions?projectKey=${projectKey}&permissions=ADMINISTER_PROJECTS`
+      );
+      const perms = await permResp.json();
+      isAdmin = perms?.permissions?.ADMINISTER_PROJECTS?.havePermission === true;
+    } catch (_) {}
+  } else {
+    isAdmin = true; // global page — trust the caller
+  }
 
   try {
+    const prefix = isAll ? 'deleted:' : `deleted:${projectKey}:`;
     const result = await kvs.query()
-      .where('key', WhereConditions.beginsWith(`deleted:${projectKey}:`))
+      .where('key', WhereConditions.beginsWith(prefix))
       .getMany();
     const issues = (result.results || []).map(r => r.value).filter(Boolean);
     issues.sort((a, b) => new Date(b.deletedAt) - new Date(a.deletedAt));
@@ -318,7 +324,9 @@ resolver.define('fetchGadgetHistory', async (req) => {
 
   let jql = '';
   if (jqlMode === 'jql' && jqlText.trim()) {
-    jql = `(${jqlText.trim()}) AND updated >= "${sinceStr}" ORDER BY updated DESC`;
+    // jqlText from GlobalPageApp is already a complete WHERE clause (no ORDER BY).
+    // Use it directly and only append ORDER BY.
+    jql = `${jqlText.trim()} ORDER BY updated DESC`;
   } else if (jqlMode === 'space' && projectKey && projectKey !== 'all') {
     jql = `project = "${projectKey}" AND updated >= "${sinceStr}" ORDER BY updated DESC`;
   } else {
@@ -330,7 +338,7 @@ resolver.define('fetchGadgetHistory', async (req) => {
 
   try {
     const resp = await api.asUser().requestJira(
-      route`/rest/api/3/search/jql?jql=${jql}&fields=summary,project&expand=changelog&maxResults=100`
+      route`/rest/api/3/search/jql?jql=${jql}&fields=summary,project,issuetype,priority,status&expand=changelog&maxResults=100`
     );
     const data = await resp.json();
     (data.issues || []).forEach(issue => {
@@ -346,15 +354,18 @@ resolver.define('fetchGadgetHistory', async (req) => {
           const fromVal = (it.fromString !== undefined && it.fromString !== null) ? it.fromString : (it.from || '');
           const toVal   = (typeof it['toString'] === 'string') ? it['toString'] : (it.to || '');
           history.push({
-            timestamp:  h.created,
+            timestamp: h.created,
             author,
             authorId,
-            issueKey:   issue.key,
-            summary:    issue.fields?.summary || '',
+            issueKey:  issue.key,
+            summary:   issue.fields?.summary          || '',
+            issueType: issue.fields?.issuetype?.name  || '',
+            priority:  issue.fields?.priority?.name   || '',
+            status:    issue.fields?.status?.name     || '',
             projectKey: proj,
-            field:      it.field || '',
-            from:       fromVal,
-            to:         toVal,
+            field:     it.field || '',
+            from:      fromVal,
+            to:        toVal,
           });
         });
       });
@@ -647,6 +658,81 @@ resolver.define('revertChanges', async (req) => {
 
   console.log(`revertChanges for ${issueKey}: ${results.length} results`);
   return { results, issueKey };
+});
+
+// ── Search Jira users (for Assignee / Reporter pickers in global page) ────────────────
+resolver.define('searchJiraUsers', async (req) => {
+  const { query = '' } = req.payload || {};
+  if (!query.trim()) return { users: [] };
+  try {
+    const resp = await api.asUser().requestJira(
+      route`/rest/api/3/user/search?query=${query}&maxResults=20`
+    );
+    const data = await resp.json();
+    const users = (Array.isArray(data) ? data : [])
+      .map(u => ({ accountId: u.accountId, displayName: u.displayName || u.emailAddress || u.accountId }));
+    return { users };
+  } catch (e) {
+    return { users: [], error: e.message };
+  }
+});
+
+// ── Fetch current user's saved Jira filters ──────────────────────────────────────────
+resolver.define('fetchSavedFilters', async () => {
+  try {
+    const resp = await api.asUser().requestJira(
+      route`/rest/api/3/filter/my?expand=jql&maxResults=50`
+    );
+    const data = await resp.json();
+    const filters = (Array.isArray(data) ? data : [])
+      .map(f => ({ id: String(f.id), name: f.name, jql: f.jql || '' }));
+    return { filters };
+  } catch (e) {
+    return { filters: [], error: e.message };
+  }
+});
+
+// ── Fetch all labels used across the site ──────────────────────────────────
+resolver.define('fetchJiraLabels', async () => {
+  try {
+    const resp = await api.asUser().requestJira(
+      route`/rest/api/3/label?maxResults=200`
+    );
+    const data = await resp.json();
+    const labels = (data.values || []).map(l => (typeof l === 'string' ? l : l.label || '')).filter(Boolean);
+    return { labels };
+  } catch (e) {
+    return { labels: [], error: e.message };
+  }
+});
+
+// ── Fetch all sprints accessible to the user ──────────────────────────────
+resolver.define('fetchJiraSprints', async () => {
+  try {
+    // Get all boards first, then fetch their sprints
+    const boardResp = await api.asUser().requestJira(
+      route`/rest/agile/1.0/board?maxResults=50`
+    );
+    const boardData = await boardResp.json();
+    const boards = boardData.values || [];
+    const sprintSet = new Map(); // id -> {id, name, state}
+    await Promise.all(boards.slice(0, 20).map(async board => {
+      try {
+        const sResp = await api.asUser().requestJira(
+          route`/rest/agile/1.0/board/${board.id}/sprint?maxResults=100`
+        );
+        const sData = await sResp.json();
+        (sData.values || []).forEach(s => {
+          if (s.id && s.name) sprintSet.set(s.id, { id: s.id, name: s.name, state: s.state || '' });
+        });
+      } catch (_) {}
+    }));
+    const sprints = Array.from(sprintSet.values())
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return { sprints };
+  } catch (e) {
+    return { sprints: [], error: e.message };
+  }
 });
 
 // ── Fetch all available Jira fields (system + custom) for the field filter dropdown ──
