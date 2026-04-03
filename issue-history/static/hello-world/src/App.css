@@ -493,6 +493,30 @@
 .ap-info           { display:flex; align-items:flex-start; gap:8px; background:#DEEBFF; border:1px solid #B3D4FF; border-radius:4px; padding:10px 14px; margin-top:16px; font-size:13px; color:#172B4D; }
 .ap-info-icon      { flex-shrink:0; }
 
+/* ── Group Permissions table (new group-based permissions UI) ──────────── */
+.gp-header         { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:16px; flex-wrap:wrap; }
+.gp-note           { font-size:13px; color:#42526E; margin:4px 0 0; }
+.gp-readonly-tag   { color:#DE350B; font-style:italic; margin-left:4px; }
+.gp-title-hint     { font-size:13px; color:#6B778C; margin-left:6px; cursor:help; }
+.gp-search-wrap    { display:flex; align-items:center; gap:6px; border:1px solid #DFE1E6; border-radius:3px; background:#FAFBFC; padding:4px 10px; height:fit-content; min-width:180px; }
+.gp-search-ico     { color:#6B778C; font-size:14px; }
+.gp-search-inp     { border:none; background:transparent; outline:none; font-size:13px; color:#172B4D; width:160px; }
+.gp-tbl-wrap       { border:1px solid #DFE1E6; border-radius:4px; overflow:auto; margin-bottom:16px; }
+.gp-tbl            { width:100%; border-collapse:collapse; font-size:13px; }
+.gp-th-group       { text-align:center; padding:10px 16px; background:#F4F5F7; font-weight:600; color:#42526E; border-bottom:2px solid #DFE1E6; white-space:nowrap; min-width:200px; text-align: center;}
+.gp-th-feat        { text-align:center; padding:10px 14px; background:#F4F5F7; font-weight:600; color:#42526E; border-bottom:2px solid #DFE1E6; border-left:1px solid #EBECF0; min-width:130px; }
+.gp-sort-ico       { font-size:11px; margin-left:4px; }
+.gp-col-label      { display:flex; flex-direction:column; align-items:center; gap:4px; cursor:pointer; user-select:none; font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.04em; }
+.gp-cb             { width:16px; height:16px; cursor:pointer; accent-color:#0052CC; }
+.gp-cb:disabled    { opacity:.6; cursor:not-allowed; }
+.gp-row            { border-bottom:1px solid #F4F5F7; transition:background .1s; }
+.gp-row:last-child { border-bottom:none; }
+.gp-row:hover      { background:#F8F9FA; }
+.gp-td-group       { padding:10px 16px 10px 20px; color:#172B4D; font-weight:500; border-right:1px solid #EBECF0; text-align:left; }
+.gp-td-feat        { text-align:center; padding:10px 14px; border-left:1px solid #EBECF0; }
+.gp-empty          { text-align:center; padding:24px; color:#6B778C; font-style:italic; }
+.gp-footer         { display:flex; align-items:center; gap:10px; padding-top:4px; }
+
 /* ── Chart subtitle ────────────────────────────────────────────────────── */
 .chart-sub         { font-size:12px; color:#6B778C; margin:-4px 0 10px; font-style:italic; }
 

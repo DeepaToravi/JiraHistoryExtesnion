@@ -1499,6 +1499,8 @@ function GlobalPageApp() {
   const [glReverting,       setGlReverting]       = React.useState(false);
   const [glRevertResults,   setGlRevertResults]   = React.useState(null);
 
+  const [glView, setGlView] = React.useState("activity"); // "activity" | "permissions"
+
   const exportRef    = React.useRef(null);
   const colPickerRef = React.useRef(null);
   const modeMenuRef  = React.useRef(null);
@@ -1943,6 +1945,22 @@ function GlobalPageApp() {
     <div className="wih proj-page">
       <h2 className="proj-title">Issue History</h2>
 
+      {/* ── Top-level view tabs ── */}
+      <div className="proj-tabs">
+        <button className={`proj-tab${glView === "activity" ? " proj-tab-on" : ""}`}
+          onClick={() => setGlView("activity")}>&#9776; Activity</button>
+        <button className={`proj-tab${glView === "permissions" ? " proj-tab-on" : ""}`}
+          onClick={() => setGlView("permissions")}>&#9881; Permissions</button>
+      </div>
+
+      {/* ── Permissions view ── */}
+      {glView === "permissions" && (
+        <AppPermissions projectKey="_global" />
+      )}
+
+      {/* ── Activity view ── */}
+      {glView === "activity" && (<>
+
       {/* ── Toolbar row 1: select mode + secondary + updated by + save view ── */}
       <div className="proj-bar" style={{ flexWrap:"wrap", gap:"6px", alignItems:"center", marginBottom:6 }}>
         <div className="proj-bar-l" style={{ flexWrap:"wrap", gap:"6px", alignItems:"center" }}>
@@ -2351,6 +2369,7 @@ function GlobalPageApp() {
         </div>
       )}
       {datePickerOpen && <div aria-hidden="true" className="date-picker-spacer" />}
+      </>)}
     </div>
   );
 }

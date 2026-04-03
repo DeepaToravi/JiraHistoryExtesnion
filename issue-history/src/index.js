@@ -433,11 +433,45 @@ resolver.define('getAppPermissions', async (req) => {
   } catch (_) {}
 
   const stored = await kvs.get(`app_perms:${projectKey}`).catch(() => null);
-  const settings = stored || {
-    viewHistory:  'all',   // 'all' | 'admins_only'
-    viewDeleted:  'all',   // 'all' | 'admins_only'
-    exportHistory: 'all',  // 'all' | 'admins_only'
+  // Clone so we can safely override fields without touching the stored value
+  const settings = {
+    viewHistory:   (stored?.viewHistory)   || 'all',
+    viewDeleted:   (stored?.viewDeleted)   || 'all',
+    exportHistory: (stored?.exportHistory) || 'all',
   };
+
+  // ── Apply group-based permission overrides (new group-permissions system) ─
+  // Per-project settings take priority; fall back to _global settings if none set for this project.
+  if (!isAdmin) {
+    const [projectGroupPerms, globalGroupPerms] = await Promise.all([
+      projectKey !== '_global' ? kvs.get(`group_perms:${projectKey}`).catch(() => null) : Promise.resolve(null),
+      kvs.get(`group_perms:_global`).catch(() => null),
+    ]);
+    // Per-project overrides global; if neither exists skip enforcement
+    const groupPerms = projectGroupPerms || globalGroupPerms;
+    if (groupPerms) {
+      let userGroupNames = new Set();
+      try {
+        const meResp = await api.asUser().requestJira(route`/rest/api/3/myself`);
+        const me = await meResp.json();
+        const grpResp = await api.asUser().requestJira(
+          route`/rest/api/3/user/groups?accountId=${me.accountId}`
+        );
+        const grpData = await grpResp.json();
+        (Array.isArray(grpData) ? grpData : []).forEach(g => { if (g.name) userGroupNames.add(g.name); });
+      } catch (_) {}
+
+      // Report → viewHistory + exportHistory
+      if (Array.isArray(groupPerms.report) && !groupPerms.report.some(g => userGroupNames.has(g))) {
+        settings.viewHistory   = 'admins_only';
+        settings.exportHistory = 'admins_only';
+      }
+      // Deleted Work Items → viewDeleted
+      if (Array.isArray(groupPerms.deletedWorkItems) && !groupPerms.deletedWorkItems.some(g => userGroupNames.has(g))) {
+        settings.viewDeleted = 'admins_only';
+      }
+    }
+  }
 
   return { settings, isAdmin };
 });
@@ -462,6 +496,118 @@ resolver.define('saveAppPermissions', async (req) => {
     viewDeleted:   settings.viewDeleted   || 'all',
     exportHistory: settings.exportHistory || 'all',
   });
+  return { success: true };
+});
+
+// ── Fetch Jira groups (for group-based permissions UI) ─────────────────────
+resolver.define('fetchJiraGroups', async (req) => {
+  const { query = '' } = req.payload || {};
+  try {
+    const resp = await api.asUser().requestJira(
+      route`/rest/api/3/groups/picker?maxResults=100&query=${query}`
+    );
+    const data = await resp.json();
+    const groups = (data.groups || []).map(g => g.name).filter(Boolean);
+    return { groups };
+  } catch (e) {
+    return { groups: [], error: e.message };
+  }
+});
+
+// ── Group Permissions resolvers ─────────────────────────────────────────────
+// Store a group-based access control list per project.
+// KVS key: `group_perms:{projectKey}`
+// Value: { report: string[]|null, deletedWorkItems: string[]|null, managePermissions: string[]|null }
+// null = no restriction (everyone); [] = nobody except admins; ['g1'] = specific groups + admins
+
+resolver.define('getGroupPermissions', async (req) => {
+  const projectKey = req.context?.extension?.project?.key || req.payload?.projectKey || '_global';
+
+  let isAdmin = false;
+  try {
+    if (projectKey === '_global') {
+      // Global page — check site-level admin permission
+      const permResp = await api.asUser().requestJira(
+        route`/rest/api/3/mypermissions?permissions=ADMINISTER`
+      );
+      const perms = await permResp.json();
+      isAdmin = perms?.permissions?.ADMINISTER?.havePermission === true;
+    } else {
+      const permResp = await api.asUser().requestJira(
+        route`/rest/api/3/mypermissions?projectKey=${projectKey}&permissions=ADMINISTER_PROJECTS`
+      );
+      const perms = await permResp.json();
+      isAdmin = perms?.permissions?.ADMINISTER_PROJECTS?.havePermission === true;
+    }
+  } catch (_) {}
+
+  const groupPerms = await kvs.get(`group_perms:${projectKey}`).catch(() => null) || {};
+
+  // Check if the user is in the managePermissions group (gives non-admins panel access)
+  let canManagePermissions = isAdmin;
+  if (!isAdmin && Array.isArray(groupPerms.managePermissions) && groupPerms.managePermissions.length > 0) {
+    try {
+      const meResp = await api.asUser().requestJira(route`/rest/api/3/myself`);
+      const me = await meResp.json();
+      const grpResp = await api.asUser().requestJira(
+        route`/rest/api/3/user/groups?accountId=${me.accountId}`
+      );
+      const grpData = await grpResp.json();
+      const userGroups = new Set((Array.isArray(grpData) ? grpData : []).map(g => g.name));
+      canManagePermissions = groupPerms.managePermissions.some(g => userGroups.has(g));
+    } catch (_) {}
+  }
+
+  return { groupPerms, isAdmin, canManagePermissions };
+});
+
+resolver.define('saveGroupPermissions', async (req) => {
+  const { projectKey, groupPerms } = req.payload || {};
+  if (!projectKey) return { success: false, error: 'No project key' };
+
+  let isAdmin = false;
+  try {
+    if (projectKey === '_global') {
+      const permResp = await api.asUser().requestJira(
+        route`/rest/api/3/mypermissions?permissions=ADMINISTER`
+      );
+      const perms = await permResp.json();
+      isAdmin = perms?.permissions?.ADMINISTER?.havePermission === true;
+    } else {
+      const permResp = await api.asUser().requestJira(
+        route`/rest/api/3/mypermissions?projectKey=${projectKey}&permissions=ADMINISTER_PROJECTS`
+      );
+      const perms = await permResp.json();
+      isAdmin = perms?.permissions?.ADMINISTER_PROJECTS?.havePermission === true;
+    }
+  } catch (_) {}
+
+  // Non-admins can save only if they are in the managePermissions group
+  if (!isAdmin) {
+    const stored = await kvs.get(`group_perms:${projectKey}`).catch(() => null) || {};
+    if (Array.isArray(stored.managePermissions) && stored.managePermissions.length > 0) {
+      try {
+        const meResp = await api.asUser().requestJira(route`/rest/api/3/myself`);
+        const me = await meResp.json();
+        const grpResp = await api.asUser().requestJira(
+          route`/rest/api/3/user/groups?accountId=${me.accountId}`
+        );
+        const grpData = await grpResp.json();
+        const userGroups = new Set((Array.isArray(grpData) ? grpData : []).map(g => g.name));
+        isAdmin = stored.managePermissions.some(g => userGroups.has(g));
+      } catch (_) {}
+    }
+    if (!isAdmin) return { success: false, error: 'Permission denied: only site admins, project admins, or members of the Permissions group can change these settings' };
+  }
+
+  // Validate and sanitise — only accept known feature keys with null or string[]
+  const safe = {};
+  for (const key of ['report', 'deletedWorkItems', 'managePermissions']) {
+    const val = groupPerms?.[key];
+    safe[key] = Array.isArray(val) ? val.map(String).filter(Boolean) : null;
+  }
+
+  await kvs.set(`group_perms:${projectKey}`, safe);
   return { success: true };
 });
 
