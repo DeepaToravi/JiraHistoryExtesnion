@@ -1409,6 +1409,45 @@ const GL_SELECT_MODES = [
   { value: "deleted",  label: "Deleted work items" },
 ];
 
+// ── Column sort context menu (⋮ button on each sortable column header) ────
+function ColSortMenu({ colKey, label, sortCol, sortAsc, onSort, isDate, children }) {
+  const [open, setOpen] = React.useState(false);
+  const ref = React.useRef(null);
+  const isActive = sortCol === colKey;
+  React.useEffect(() => {
+    const h = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
+  const ascLabel  = isDate ? "Sort oldest → newest" : "Sort A → Z";
+  const descLabel = isDate ? "Sort newest → oldest" : "Sort Z → A";
+  return (
+    <span className="csm-wrap" ref={ref}>
+      <span className="csm-label">
+        {label}
+        {isActive && <span className="csm-arrow">{sortAsc ? " ▲" : " ▼"}</span>}
+        {children}
+      </span>
+      <button className={`csm-btn${open ? " csm-open" : ""}`}
+        title="Sort options"
+        onClick={e => { e.stopPropagation(); setOpen(v => !v); }}>&#8942;</button>
+      {open && (
+        <div className="csm-menu">
+          <div className={`csm-item${isActive ? " csm-on" : ""}`}
+            onClick={() => { onSort(colKey, isActive ? !sortAsc : false); setOpen(false); }}>
+            <span className="csm-ico">&#9660;</span> Manage sorting
+          </div>
+          <div className="csm-sep" />
+          <div className={`csm-item${isActive && sortAsc ? " csm-on" : ""}`}
+            onClick={() => { onSort(colKey, true); setOpen(false); }}>{ascLabel}</div>
+          <div className={`csm-item${isActive && !sortAsc ? " csm-on" : ""}`}
+            onClick={() => { onSort(colKey, false); setOpen(false); }}>{descLabel}</div>
+        </div>
+      )}
+    </span>
+  );
+}
+
 function GlColHeaderFilter({ label, opts, val, onChange }) {
   const [open, setOpen] = React.useState(false);
   const ref = React.useRef(null);
@@ -1474,6 +1513,7 @@ function GlobalPageApp() {
   const [customStart, setCustomStart] = React.useState("");
   const [customEnd,   setCustomEnd]   = React.useState("");
   const [sortAsc,     setSortAsc]     = React.useState(false);
+  const [sortCol,     setSortCol]     = React.useState("date"); // date|updater|key|summary|priority|status
 
   // ── View mode ────────────────────────────────────────────────────────────
   const [viewMode, setViewMode] = React.useState("table"); // table | people | chart
@@ -1699,9 +1739,20 @@ function GlobalPageApp() {
     if (priorityF !== "any") r = r.filter(x => x.priority === priorityF);
     if (statusF   !== "any") r = r.filter(x => x.status   === statusF);
     if (dateF     !== "any") r = r.filter(x => matchDate(x.timestamp, dateF, customStart, customEnd));
-    if (sortAsc)   r = [...r].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+    r = [...r].sort((a, b) => {
+      let cmp = 0;
+      switch (sortCol) {
+        case "updater": cmp = (a.author   ||"").localeCompare(b.author   ||""); break;
+        case "key":     cmp = (a.issueKey ||"").localeCompare(b.issueKey ||""); break;
+        case "priority":cmp = (a.priority ||"").localeCompare(b.priority ||""); break;
+        case "status":  cmp = (a.status   ||"").localeCompare(b.status   ||""); break;
+        case "summary": cmp = (a.summary  ||"").localeCompare(b.summary  ||""); break;
+        default:        cmp = new Date(a.timestamp) - new Date(b.timestamp);
+      }
+      return sortAsc ? cmp : -cmp;
+    });
     return r;
-  }, [history, userF, priorityF, statusF, dateF, customStart, customEnd, sortAsc]);
+  }, [history, userF, priorityF, statusF, dateF, customStart, customEnd, sortAsc, sortCol]);
 
   const grouped = React.useMemo(() => {
     const order = [], map = {};
@@ -2018,7 +2069,7 @@ function GlobalPageApp() {
 
           {/* Save View */}
           <SavedReports
-            currentFilters={{ selectMode, projectKey, jqlText, secondaryVal, secondaryLabel, days, userF, priorityF, statusF, dateF, customStart, customEnd, sortAsc, viewMode }}
+            currentFilters={{ selectMode, projectKey, jqlText, secondaryVal, secondaryLabel, days, userF, priorityF, statusF, dateF, customStart, customEnd, sortAsc, sortCol, viewMode }}
             viewType="global"
             onLoad={r => {
               const f = r.filters || {};
@@ -2035,6 +2086,7 @@ function GlobalPageApp() {
               if (f.customStart   !== undefined) setCustomStart(f.customStart);
               if (f.customEnd     !== undefined) setCustomEnd(f.customEnd);
               if (f.sortAsc       !== undefined) setSortAsc(f.sortAsc);
+              if (f.sortCol       !== undefined) setSortCol(f.sortCol);
               if (f.viewMode      !== undefined) setViewMode(f.viewMode);
               setPage(1);
             }}
@@ -2233,13 +2285,13 @@ function GlobalPageApp() {
                   />
                 </th>
                 <th style={{ width:28 }}></th>
-                {visibleCols.has("date")      && <th className="th-sort" onClick={() => { setSortAsc(v => !v); setPage(1); }}>Date of change <span className="sort-ico">{sortAsc?"▲":"▼"}</span></th>}
-                {visibleCols.has("updater")   && <th>Updated by</th>}
-                {visibleCols.has("key")       && <th>Key</th>}
+                {visibleCols.has("date")      && <th><ColSortMenu colKey="date" label="Date of change" sortCol={sortCol} sortAsc={sortAsc} isDate onSort={(col, asc) => { setSortCol(col); setSortAsc(asc); setPage(1); }} /></th>}
+                {visibleCols.has("updater")   && <th><ColSortMenu colKey="updater" label="Updated by" sortCol={sortCol} sortAsc={sortAsc} onSort={(col, asc) => { setSortCol(col); setSortAsc(asc); setPage(1); }} /></th>}
+                {visibleCols.has("key")       && <th><ColSortMenu colKey="key" label="Key" sortCol={sortCol} sortAsc={sortAsc} onSort={(col, asc) => { setSortCol(col); setSortAsc(asc); setPage(1); }} /></th>}
                 {visibleCols.has("issuetype") && <th>Issue Type</th>}
-                {visibleCols.has("summary")   && <th>Summary</th>}
-                {visibleCols.has("priority")  && <th>Priority <GlColHeaderFilter label="priority" opts={priorityOpts} val={priorityF} onChange={v => { setPriorityF(v); setPage(1); }} /></th>}
-                {visibleCols.has("status")    && <th>Status <GlColHeaderFilter label="status" opts={statusOpts} val={statusF} onChange={v => { setStatusF(v); setPage(1); }} /></th>}
+                {visibleCols.has("summary")   && <th><ColSortMenu colKey="summary" label="Summary" sortCol={sortCol} sortAsc={sortAsc} onSort={(col, asc) => { setSortCol(col); setSortAsc(asc); setPage(1); }} /></th>}
+                {visibleCols.has("priority")  && <th><ColSortMenu colKey="priority" label="Priority" sortCol={sortCol} sortAsc={sortAsc} onSort={(col, asc) => { setSortCol(col); setSortAsc(asc); setPage(1); }}><GlColHeaderFilter label="priority" opts={priorityOpts} val={priorityF} onChange={v => { setPriorityF(v); setPage(1); }} /></ColSortMenu></th>}
+                {visibleCols.has("status")    && <th><ColSortMenu colKey="status" label="Status" sortCol={sortCol} sortAsc={sortAsc} onSort={(col, asc) => { setSortCol(col); setSortAsc(asc); setPage(1); }}><GlColHeaderFilter label="status" opts={statusOpts} val={statusF} onChange={v => { setStatusF(v); setPage(1); }} /></ColSortMenu></th>}
                 {visibleCols.has("field")     && <th>Field</th>}
                 {visibleCols.has("changes")   && <th>Changes</th>}
               </tr>

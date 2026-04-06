@@ -516,7 +516,19 @@
 .gp-td-feat        { text-align:center; padding:10px 14px; border-left:1px solid #EBECF0; }
 .gp-empty          { text-align:center; padding:24px; color:#6B778C; font-style:italic; }
 .gp-footer         { display:flex; align-items:center; gap:10px; padding-top:4px; }
-
+/* ── Column Sort Menu (⋮ button on sortable column headers) ──────────────── */
+.csm-wrap        { display:inline-flex; align-items:center; gap:3px; position:relative; white-space:nowrap; }
+.csm-label       { display:inline-flex; align-items:center; gap:2px; font-weight:600; color:#42526E; font-size:11px; text-transform:uppercase; letter-spacing:.5px; }
+.csm-arrow       { color:#0052CC; }
+.csm-btn         { background:none; border:none; cursor:pointer; font-size:14px; color:#97A0AF; padding:0 2px; line-height:1; border-radius:2px; display:inline-flex; align-items:center; }
+.csm-btn:hover,
+.csm-btn.csm-open{ color:#0052CC; background:#DEEBFF; }
+.csm-menu        { position:absolute; top:calc(100% + 4px); left:0; z-index:500; background:#fff; border:1px solid #DFE1E6; border-radius:4px; box-shadow:0 4px 14px rgba(9,30,66,.18); min-width:190px; padding:4px 0; }
+.csm-item        { padding:7px 14px; font-size:13px; cursor:pointer; color:#172B4D; display:flex; align-items:center; gap:6px; }
+.csm-item:hover  { background:#F4F5F7; }
+.csm-item.csm-on { color:#0052CC; font-weight:600; background:#DEEBFF; }
+.csm-ico         { font-size:10px; color:#6B778C; }
+.csm-sep         { height:1px; background:#DFE1E6; margin:3px 0; }
 /* ── Chart subtitle ────────────────────────────────────────────────────── */
 .chart-sub         { font-size:12px; color:#6B778C; margin:-4px 0 10px; font-style:italic; }
 
