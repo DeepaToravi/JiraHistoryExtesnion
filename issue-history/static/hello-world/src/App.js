@@ -1128,21 +1128,11 @@ function ProjectActivityApp() {
             🗑️ Deleted Issues
           </button>
         )}
-        <button
-          className={`proj-tab${projView === "settings" ? " proj-tab-on" : ""}`}
-          onClick={() => setProjView("settings")}>
-          &#9881; Settings
-        </button>
       </div>
 
       {/* ── Deleted Issues view ── */}
       {projView === "deleted" && (
         <DeletedIssues projectKey={projectKey} />
-      )}
-
-      {/* ── Settings / Permissions view ── */}
-      {projView === "settings" && (
-        <AppPermissions projectKey={projectKey} />
       )}
 
       {/* ── Activity view ── */}
