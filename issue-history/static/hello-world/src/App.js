@@ -1298,23 +1298,11 @@ function ProjectActivityApp() {
             🗑️ Deleted Issues
           </button>
         )}
-        {isAdmin && (
-          <button
-            className={`proj-tab${projView === "security" ? " proj-tab-on" : ""}`}
-            onClick={() => setProjView("security")}>
-            🔐 Security Scanner
-          </button>
-        )}
       </div>
 
       {/* ── Deleted Issues view ── */}
       {projView === "deleted" && (
         <DeletedIssues projectKey={projectKey} />
-      )}
-
-      {/* ── Security Scanner view ── */}
-      {projView === "security" && (
-        <SecurityScanner projectKey={projectKey} mode="project" />
       )}
 
       {/* ── Activity view ── */}
@@ -2258,10 +2246,7 @@ function GlobalPageApp() {
 
       {/* ── Security Scanner view ── */}
       {glView === "security" && (
-        <SecurityScanner
-          projectKey={projectKey !== "all" ? projectKey : undefined}
-          mode={projectKey !== "all" ? "project" : "project"}
-        />
+        <SecurityScanner mode="global" />
       )}
 
       {/* ── Activity view ── */}

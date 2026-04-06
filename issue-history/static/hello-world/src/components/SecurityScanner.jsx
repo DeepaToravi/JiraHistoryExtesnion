@@ -2,58 +2,79 @@ import React from "react";
 import { invoke } from "@forge/bridge";
 
 // ── SecurityScanner ──────────────────────────────────────────────────────────
-// Scans the current issue / project for PII & DLP sensitive data patterns
-// (emails, credit cards, tokens, SSNs, phone numbers, IBANs, etc.)
-//
+// Global-level PII & DLP scanner — matches marketplace Issue History look.
 // Props:
-//   issueKey   – if provided, scans a single issue
-//   projectKey – if provided, scans all recently-updated issues in the project
-//   mode       – "issue" | "project"
+//   projectKey – optional project key to scope scan; if omitted scans all spaces
+//   mode       – "global" (default) | "project"
 
-const SEVERITY_ORDER = { critical: 0, high: 1, medium: 2, low: 3 };
-const SEVERITY_COLORS = {
-  critical: { bg: "#FFEBE6", border: "#FF5630", text: "#BF2600", label: "🔴 Critical" },
-  high:     { bg: "#FFF0E6", border: "#FF8B00", text: "#974F0C", label: "🟠 High"     },
-  medium:   { bg: "#FFFAE6", border: "#FFAB00", text: "#7A5C00", label: "🟡 Medium"   },
-  low:      { bg: "#E3FCEF", border: "#36B37E", text: "#006644", label: "🟢 Low"      },
+// Severity dot rating: critical=5, high=4, medium=3, low=1 (out of 5)
+const SEV_META = {
+  critical: { dots: 5, color: "#FF5630", label: "Critical" },
+  high:     { dots: 4, color: "#FF8B00", label: "High"     },
+  medium:   { dots: 3, color: "#FFAB00", label: "Medium"   },
+  low:      { dots: 1, color: "#36B37E", label: "Low"      },
 };
 
-function SeverityBadge({ severity }) {
-  const s = SEVERITY_COLORS[severity] || SEVERITY_COLORS.medium;
+function SeverityDots({ severity }) {
+  const m = SEV_META[severity] || SEV_META.low;
   return (
-    <span style={{
-      background: s.bg, border: `1px solid ${s.border}`, color: s.text,
-      borderRadius: 4, padding: "2px 8px", fontSize: "0.8em", fontWeight: 600, whiteSpace: "nowrap",
-    }}>
-      {s.label}
+    <span className="sev-dots" title={m.label}>
+      {[1, 2, 3, 4, 5].map(i => (
+        <span key={i} className="sev-dot"
+          style={{ background: i <= m.dots ? m.color : "#DFE1E6" }} />
+      ))}
+      <span className="sev-dot-label" style={{ color: m.color }}>{m.dots}/5</span>
     </span>
   );
 }
 
-export default function SecurityScanner({ issueKey, projectKey, mode = "issue" }) {
-  const [findings,    setFindings]    = React.useState([]);
-  const [loading,     setLoading]     = React.useState(false);
-  const [scanned,     setScanned]     = React.useState(false);
-  const [error,       setError]       = React.useState(null);
-  const [scanScope,   setScanScope]   = React.useState("current"); // "current" | "history"
-  const [severityF,   setSeverityF]   = React.useState("all");
-  const [patternF,    setPatternF]    = React.useState("all");
-  const [search,      setSearch]      = React.useState("");
-  const [exportOpen,  setExportOpen]  = React.useState(false);
-  const exportRef = React.useRef(null);
+function fmt(isoStr) {
+  if (!isoStr) return "";
+  try {
+    return new Date(isoStr).toLocaleString("en-US", {
+      month: "short", day: "numeric", year: "numeric",
+      hour: "2-digit", minute: "2-digit",
+    });
+  } catch { return isoStr.slice(0, 16).replace("T", " "); }
+}
 
+export default function SecurityScanner({ projectKey, mode = "global" }) {
+  const [findings,  setFindings]  = React.useState([]);
+  const [loading,   setLoading]   = React.useState(false);
+  const [scanned,   setScanned]   = React.useState(false);
+  const [error,     setError]     = React.useState(null);
+  const [scanScope, setScanScope] = React.useState("current");
+  const [projects,  setProjects]  = React.useState([]);
+
+  // Fetch available projects on mount to populate Space dropdown
   React.useEffect(() => {
-    const h = e => { if (exportRef.current && !exportRef.current.contains(e.target)) setExportOpen(false); };
-    document.addEventListener("mousedown", h);
-    return () => document.removeEventListener("mousedown", h);
+    invoke("fetchAccessibleProjects").then(res => {
+      if (res.projects) setProjects(res.projects);
+    }).catch(() => {});
   }, []);
 
+  // Filters
+  const [fSpace,   setFSpace]   = React.useState(projectKey || "all");
+  const [fUpdater, setFUpdater] = React.useState("any");
+  const [fFrom,    setFFrom]    = React.useState("");
+  const [fTo,      setFTo]      = React.useState("");
+  const [fSev,     setFSev]     = React.useState("all");
+  const [fPattern, setFPattern] = React.useState("all");
+  const [fSearch,  setFSearch]  = React.useState("");
+  const [perPage,  setPerPage]  = React.useState(100);
+
+  const allUpdaters = React.useMemo(() =>
+    [...new Set(findings.map(f => f.updater).filter(Boolean))].sort(),
+  [findings]);
+  const allPatterns = React.useMemo(() =>
+    [...new Set(findings.map(f => f.pattern))].sort(),
+  [findings]);
+
   async function runScan() {
-    setLoading(true); setError(null); setFindings([]);
+    setLoading(true); setError(null); setFindings([]); setScanned(false);
     try {
-      const payload = mode === "project"
-        ? { projectKey, scanScope }
-        : { issueKey, scanScope };
+      const payload = { scanScope };
+      if (fSpace && fSpace !== "all") payload.projectKey = fSpace;
       const res = await invoke("scanIssueForPII", payload);
       if (res.error) setError(res.error);
       setFindings(res.findings || []);
@@ -67,18 +88,19 @@ export default function SecurityScanner({ issueKey, projectKey, mode = "issue" }
 
   const filtered = React.useMemo(() => {
     let f = findings;
-    if (severityF !== "all") f = f.filter(x => x.severity === severityF);
-    if (patternF  !== "all") f = f.filter(x => x.pattern  === patternF);
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      f = f.filter(x => (x.issueKey + x.field + x.pattern + x.snippet + x.context).toLowerCase().includes(q));
+    if (fSev !== "all")     f = f.filter(x => x.severity === fSev);
+    if (fPattern !== "all") f = f.filter(x => x.pattern  === fPattern);
+    if (fUpdater !== "any") f = f.filter(x => x.updater  === fUpdater);
+    if (fFrom) f = f.filter(x => x.firstDetected && x.firstDetected >= fFrom);
+    if (fTo)   f = f.filter(x => x.firstDetected && x.firstDetected <= fTo + "T23:59:59");
+    if (fSearch.trim()) {
+      const q = fSearch.toLowerCase();
+      f = f.filter(x =>
+        (x.issueKey + x.summary + x.field + x.pattern + (x.actualValue || "") + x.context).toLowerCase().includes(q)
+      );
     }
     return f;
-  }, [findings, severityF, patternF, search]);
-
-  const uniquePatterns = React.useMemo(() =>
-    [...new Set(findings.map(f => f.pattern))].sort(),
-  [findings]);
+  }, [findings, fSev, fPattern, fUpdater, fFrom, fTo, fSearch]);
 
   const counts = React.useMemo(() => {
     const c = { critical: 0, high: 0, medium: 0, low: 0 };
@@ -87,136 +109,203 @@ export default function SecurityScanner({ issueKey, projectKey, mode = "issue" }
   }, [findings]);
 
   function exportCSV() {
-    const h = ["Severity", "Issue Key", "Field", "Pattern", "Snippet", "Context", "Count"];
-    const q = v => `"${String(v||"").replace(/"/g,'""')}"`;
-    const csv = [h, ...filtered.map(f => [f.severity,f.issueKey||issueKey||"",f.field,f.pattern,f.snippet,f.context,f.count])]
-      .map(row => row.map(q).join(",")).join("\r\n");
+    const h = ["First Detected", "Key", "Summary", "Updater", "Field", "Severity", "Type of Finding", "Security Finding"];
+    const q = v => `"${String(v || "").replace(/"/g, '""')}"`;
+    const csv = [h, ...filtered.map(f => [
+      f.firstDetected?.slice(0, 16) || "",
+      f.issueKey || "",
+      f.summary  || "",
+      f.updater  || "",
+      f.field    || "",
+      f.severity || "",
+      f.pattern  || "",
+      f.actualValue || f.snippet || "",
+    ])].map(r => r.map(q).join(",")).join("\r\n");
     const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a"); a.href = url; a.download = `pii-scan-${issueKey||projectKey||"report"}.csv`;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+    const url  = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `pii-scan-${fSpace || "global"}.csv`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   }
 
-  return (
-    <div className="scanner-wrap">
-      {/* Header */}
-      <div className="scanner-header">
-        <span className="scanner-title">🔐 Security Scanner — PII &amp; DLP</span>
-        <span className="scanner-sub">
-          Detect sensitive data in {mode === "project" ? "project issues" : `issue ${issueKey}`}: emails, credit cards, tokens, IBANs, SSNs, and more.
-        </span>
-      </div>
+  const paged = filtered.slice(0, perPage);
 
-      {/* Controls */}
-      <div className="scanner-controls">
-        <div className="scanner-scope">
-          <label className="scanner-scope-label">Scan scope:</label>
-          <label className="scanner-radio">
-            <input type="radio" name="scope" value="current" checked={scanScope === "current"}
-              onChange={() => setScanScope("current")} />
-            Current field values &amp; comments
+  return (
+    <div className="gl-scanner">
+      {/* ── Header row ── */}
+      <div className="gl-scanner-header">
+        <div className="gl-scanner-header-l">
+          <span className="gl-scanner-icon">&#128274;</span>
+          <div>
+            <div className="gl-scanner-title">Security Scanner</div>
+            <div className="gl-scanner-sub">PII &amp; DLP — detect sensitive data across your Jira spaces</div>
+          </div>
+        </div>
+        <div className="gl-scanner-scope">
+          <label className="gl-scanner-radio">
+            <input type="radio" name="gl-scope" value="current"
+              checked={scanScope === "current"} onChange={() => setScanScope("current")} />
+            Current fields &amp; comments
           </label>
-          <label className="scanner-radio">
-            <input type="radio" name="scope" value="history" checked={scanScope === "history"}
-              onChange={() => setScanScope("history")} />
-            Include full change history
+          <label className="gl-scanner-radio">
+            <input type="radio" name="gl-scope" value="history"
+              checked={scanScope === "history"} onChange={() => setScanScope("history")} />
+            Include full history
           </label>
         </div>
-        <button className="prim-btn scanner-run-btn" onClick={runScan} disabled={loading}>
+        <button className="gl-scanner-run prim-btn" onClick={runScan} disabled={loading}>
           {loading ? <><span className="spin-ico">&#8635;</span> Scanning…</> : "🔍 Run Scan"}
         </button>
       </div>
 
-      {/* Summary badges */}
+      {/* ── Filter bar (marketplace style) ── */}
+      <div className="gl-scanner-bar">
+        <div className="gl-bar-group">
+          <label className="gl-bar-label">Space</label>
+          <select className="gl-bar-sel" value={fSpace} onChange={e => setFSpace(e.target.value)}>
+            <option value="all">All spaces</option>
+            {projects.map(p => (
+              <option key={p.key} value={p.key}>{p.name} ({p.key})</option>
+            ))}
+          </select>
+        </div>
+        <div className="gl-bar-group">
+          <label className="gl-bar-label">Updated by</label>
+          <select className="gl-bar-sel" value={fUpdater} onChange={e => setFUpdater(e.target.value)}>
+            <option value="any">Any User</option>
+            {allUpdaters.map(u => <option key={u} value={u}>{u}</option>)}
+          </select>
+        </div>
+        <div className="gl-bar-group">
+          <label className="gl-bar-label">From</label>
+          <input type="date" className="gl-bar-date" value={fFrom} onChange={e => setFFrom(e.target.value)} />
+        </div>
+        <div className="gl-bar-group">
+          <label className="gl-bar-label">To</label>
+          <input type="date" className="gl-bar-date" value={fTo} onChange={e => setFTo(e.target.value)} />
+        </div>
+        <div className="gl-bar-group">
+          <label className="gl-bar-label">Severity</label>
+          <select className="gl-bar-sel" value={fSev} onChange={e => setFSev(e.target.value)}>
+            <option value="all">All</option>
+            {["critical","high","medium","low"].map(s =>
+              <option key={s} value={s}>{SEV_META[s].label}</option>)}
+          </select>
+        </div>
+        <div className="gl-bar-group">
+          <label className="gl-bar-label">Finding type</label>
+          <select className="gl-bar-sel" value={fPattern} onChange={e => setFPattern(e.target.value)}>
+            <option value="all">All types</option>
+            {allPatterns.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+        </div>
+        <div className="gl-bar-group gl-bar-search">
+          <label className="gl-bar-label">Search</label>
+          <div className="srch" style={{ minWidth: 180 }}>
+            <span className="srch-ico">&#128269;</span>
+            <input className="srch-inp" placeholder="Key, summary, value…"
+              value={fSearch} onChange={e => setFSearch(e.target.value)} />
+          </div>
+        </div>
+        <button className="icon-btn" title="Refresh" onClick={runScan} disabled={loading}
+          style={{ alignSelf: "flex-end", marginBottom: 2 }}>&#8635;</button>
+        {scanned && filtered.length > 0 && (
+          <button className="icon-btn" title="Export CSV" onClick={exportCSV}
+            style={{ alignSelf: "flex-end", marginBottom: 2 }}>&#11015; CSV</button>
+        )}
+      </div>
+
+      {/* ── Summary cards ── */}
       {scanned && !loading && (
-        <div className="scanner-summary">
+        <div className="gl-scanner-summary">
           {Object.entries(counts).map(([sev, count]) => (
-            <div key={sev} className={`scanner-summary-card sev-${sev}`}
-              style={{ cursor: "pointer", opacity: severityF !== "all" && severityF !== sev ? 0.4 : 1 }}
-              onClick={() => setSeverityF(severityF === sev ? "all" : sev)}>
-              <SeverityBadge severity={sev} />
-              <strong className="scanner-summary-count">{count}</strong>
+            <div key={sev} className={`gl-sev-card sev-${sev}`}
+              style={{ opacity: fSev !== "all" && fSev !== sev ? 0.45 : 1, cursor: "pointer" }}
+              onClick={() => setFSev(fSev === sev ? "all" : sev)}>
+              <span className="gl-sev-label" style={{ color: SEV_META[sev].color }}>{SEV_META[sev].label}</span>
+              <strong className="gl-sev-count">{count}</strong>
             </div>
           ))}
           {findings.length === 0 && (
-            <div className="scanner-clean">
-              <span>✅ No PII or sensitive data patterns detected.</span>
-            </div>
+            <div className="scanner-clean"><span>✅ No PII or sensitive data patterns detected.</span></div>
           )}
         </div>
       )}
 
-      {error && <div className="err-box"><strong>Scan error</strong><p>{error}</p></div>}
+      {error && <div className="err-box"><strong>Scan error:</strong> {error}</div>}
 
-      {/* Filters + export */}
+      {/* ── Results meta row ── */}
       {scanned && findings.length > 0 && (
-        <div className="scanner-filter-bar">
-          <select className="scanner-select" value={severityF} onChange={e => setSeverityF(e.target.value)}>
-            <option value="all">All severities</option>
-            {["critical","high","medium","low"].map(s => <option key={s} value={s}>{SEVERITY_COLORS[s].label}</option>)}
-          </select>
-          <select className="scanner-select" value={patternF} onChange={e => setPatternF(e.target.value)}>
-            <option value="all">All patterns</option>
-            {uniquePatterns.map(p => <option key={p} value={p}>{p}</option>)}
-          </select>
-          <div className="srch">
-            <span className="srch-ico">&#128269;</span>
-            <input className="srch-inp" placeholder="Search findings…" value={search}
-              onChange={e => setSearch(e.target.value)} />
-          </div>
-          <div className="dd-wrap" ref={exportRef}>
-            <button className="icon-btn" title="Export" onClick={() => setExportOpen(v => !v)}>
-              &#11015; Export &#9660;
-            </button>
-            {exportOpen && (
-              <ul className="dd-list align-r">
-                <li onClick={() => { exportCSV(); setExportOpen(false); }}>&#128196; CSV</li>
-              </ul>
-            )}
-          </div>
-          <span className="cnt">{filtered.length} finding{filtered.length !== 1 ? "s" : ""}</span>
+        <div className="gl-scanner-meta">
+          <span>{filtered.length} of {findings.length} findings</span>
+          <label style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center", fontSize: 13 }}>
+            Findings per page:
+            <select className="gl-bar-sel" value={perPage} onChange={e => setPerPage(Number(e.target.value))}
+              style={{ width: 70 }}>
+              {[25, 50, 100, 200].map(n => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </label>
         </div>
       )}
 
-      {/* Findings table */}
-      {scanned && filtered.length > 0 && (
+      {/* ── Findings table (marketplace layout) ── */}
+      {scanned && paged.length > 0 && (
         <div className="tbl-wrap">
-          <table className="tbl">
+          <table className="tbl gl-scanner-tbl">
             <thead>
               <tr>
-                <th>Severity</th>
-                {mode === "project" && <th>Issue Key</th>}
+                <th>First detected</th>
+                <th>Key</th>
+                <th>Summary</th>
+                <th>Updater</th>
                 <th>Field</th>
-                <th>Pattern Detected</th>
-                <th>Sample</th>
-                <th>Context</th>
-                <th>Count</th>
+                <th>Severity</th>
+                <th>Type of finding</th>
+                <th>Security finding</th>
               </tr>
             </thead>
             <tbody>
-              {filtered.map((f, i) => {
-                const sev = SEVERITY_COLORS[f.severity] || SEVERITY_COLORS.medium;
-                return (
-                  <tr key={i} style={{ background: sev.bg }}>
-                    <td><SeverityBadge severity={f.severity} /></td>
-                    {mode === "project" && <td><a className="key-link" href={`/browse/${f.issueKey}`} target="_blank" rel="noreferrer">{f.issueKey}</a></td>}
-                    <td className="td-field">{f.field}</td>
-                    <td><strong>{f.pattern}</strong></td>
-                    <td><code className="scanner-snippet">{f.snippet}</code></td>
-                    <td className="td-summary" style={{ color: "#6B778C", fontSize: "0.85em" }}>{f.context}</td>
-                    <td style={{ textAlign: "center" }}>{f.count}</td>
-                  </tr>
-                );
-              })}
+              {paged.map((f, i) => (
+                <tr key={i}>
+                  <td style={{ whiteSpace: "nowrap", color: "#5E6C84", fontSize: "0.85em" }}>
+                    {fmt(f.firstDetected)}
+                  </td>
+                  <td>
+                    <a className="key-link" href={`/browse/${f.issueKey}`}
+                      target="_blank" rel="noreferrer">{f.issueKey}</a>
+                  </td>
+                  <td className="td-summary" style={{ maxWidth: 220 }}>{f.summary}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>{f.updater || "—"}</td>
+                  <td className="td-field">{f.field}</td>
+                  <td><SeverityDots severity={f.severity} /></td>
+                  <td style={{ fontWeight: 500 }}>{f.pattern}</td>
+                  <td>
+                    <code className="gl-scanner-value"
+                      style={{ color: SEV_META[f.severity]?.color || "#172B4D" }}>
+                      {f.actualValue || f.snippet || "—"}
+                    </code>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
       )}
 
-      {!loading && scanned && filtered.length === 0 && findings.length > 0 && (
+      {scanned && !loading && filtered.length === 0 && findings.length > 0 && (
         <div className="state-box">
           <p className="empty-title">No findings match current filters</p>
-          <button className="prim-btn" onClick={() => { setSeverityF("all"); setPatternF("all"); setSearch(""); }}>Clear filters</button>
+          <button className="prim-btn"
+            onClick={() => { setFSev("all"); setFPattern("all"); setFSearch(""); setFUpdater("any"); setFFrom(""); setFTo(""); }}>
+            Clear filters
+          </button>
+        </div>
+      )}
+
+      {!scanned && !loading && (
+        <div className="state-box" style={{ textAlign: "center", color: "#5E6C84", padding: 32 }}>
+          <p>Select a space (or leave as &quot;All spaces&quot;) and click <strong>Run Scan</strong> to detect PII and sensitive data.</p>
         </div>
       )}
     </div>

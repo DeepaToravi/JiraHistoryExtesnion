@@ -966,17 +966,18 @@ resolver.define('fetchIssueFields', async () => {
 
 // ── Security Scanner / PII & DLP ────────────────────────────────────────────
 // Scans issue fields and change history for sensitive data patterns.
-// Returns a list of findings: { issueKey, field, snippet, pattern, severity }
+// Returns a list of findings: { issueKey, field, snippet, actualValue, pattern, severity }
 
 const PII_PATTERNS = [
-  { name: 'Email Address',      regex: /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g,         severity: 'high'   },
+  { name: 'Email Address',      regex: /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g,         severity: 'high'     },
   { name: 'Credit Card Number', regex: /\b(?:\d[ \-]?){13,16}\b/g,                                    severity: 'critical' },
-  { name: 'Phone Number',       regex: /\b(?:\+?\d[\d\s\-().]{7,}\d)\b/g,                             severity: 'medium' },
-  { name: 'IP Address',         regex: /\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g,                    severity: 'medium' },
+  { name: 'Phone Number',       regex: /\b(?:\+?\d[\d\s\-().]{7,}\d)\b/g,                             severity: 'medium'   },
+  { name: 'IP Address',         regex: /\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g,                    severity: 'medium'   },
   { name: 'SSN (US)',           regex: /\b\d{3}[\-\s]?\d{2}[\-\s]?\d{4}\b/g,                         severity: 'critical' },
-  { name: 'Passport / ID',      regex: /\b[A-Z]{1,2}\d{6,9}\b/g,                                     severity: 'high'   },
+  { name: 'Passport / ID',      regex: /\b[A-Z]{1,2}\d{6,9}\b/g,                                     severity: 'high'     },
   { name: 'API Key / Token',    regex: /(?:api[_\-]?key|token|secret|password|bearer)\s*[=:]\s*\S+/gi, severity: 'critical' },
-  { name: 'IBAN',               regex: /\b[A-Z]{2}\d{2}[A-Z0-9]{4}\d{7}(?:[A-Z0-9]{0,16})?\b/g,     severity: 'high'   },
+  { name: 'IBAN',               regex: /\b[A-Z]{2}\d{2}[A-Z0-9]{4}\d{7}(?:[A-Z0-9]{0,16})?\b/g,     severity: 'high'     },
+  { name: 'ZIP / Postal Code',  regex: /\b\d{5}(?:-\d{4})?\b/g,                                      severity: 'low'      },
 ];
 
 function scanText(text) {
@@ -986,10 +987,11 @@ function scanText(text) {
     const matches = text.match(regex);
     if (matches) {
       findings.push({
-        pattern:  name,
+        pattern:     name,
         severity,
-        snippet:  matches[0].slice(0, 60) + (matches[0].length > 60 ? '…' : ''),
-        count:    matches.length,
+        actualValue: matches[0],                                                       // exact matched value
+        snippet:     matches[0].slice(0, 60) + (matches[0].length > 60 ? '…' : ''),   // backward compat
+        count:       matches.length,
       });
     }
   }
@@ -998,18 +1000,21 @@ function scanText(text) {
 
 resolver.define('scanIssueForPII', async (req) => {
   const { issueKey, projectKey, scanScope = 'current' } = req.payload || {};
-  if (!issueKey && !projectKey) return { findings: [], error: 'No issueKey or projectKey provided' };
+  // issueKey OR projectKey is optional — if neither given, scan all accessible issues
 
   const allFindings = [];
 
   const processIssue = async (key) => {
     try {
       const [issueResp, commentsResp] = await Promise.all([
-        api.asUser().requestJira(route`/rest/api/3/issue/${key}?expand=changelog&fields=summary,description,comment`),
+        api.asUser().requestJira(route`/rest/api/3/issue/${key}?expand=changelog&fields=summary,description,comment,assignee,reporter,updated,created`),
         api.asUser().requestJira(route`/rest/api/3/issue/${key}/comment?maxResults=50`),
       ]);
       const issue = await issueResp.json();
       const fields = issue.fields || {};
+      const summary   = fields.summary || '';
+      const updater   = fields.assignee?.displayName || fields.reporter?.displayName || '';
+      const firstDetected = fields.created || new Date().toISOString();
 
       // Scan current field values
       const currentFields = {
@@ -1018,7 +1023,7 @@ resolver.define('scanIssueForPII', async (req) => {
       };
       for (const [fieldName, value] of Object.entries(currentFields)) {
         for (const f of scanText(value)) {
-          allFindings.push({ issueKey: key, field: fieldName, context: 'Current value', ...f });
+          allFindings.push({ issueKey: key, summary, updater, firstDetected, field: fieldName, context: 'Current value', ...f });
         }
       }
 
@@ -1026,8 +1031,10 @@ resolver.define('scanIssueForPII', async (req) => {
       const commentsData = await commentsResp.json();
       (commentsData.comments || []).forEach(c => {
         const text = extractAdfText(c.body);
+        const commentUpdater = c.author?.displayName || 'Unknown';
+        const commentDate    = c.created || firstDetected;
         for (const f of scanText(text)) {
-          allFindings.push({ issueKey: key, field: 'Comment', context: `By ${c.author?.displayName || 'Unknown'} on ${c.created?.slice(0, 10)}`, ...f });
+          allFindings.push({ issueKey: key, summary, updater: commentUpdater, firstDetected: commentDate, field: 'Comment', context: `By ${commentUpdater} on ${commentDate?.slice(0, 10)}`, ...f });
         }
       });
 
@@ -1037,7 +1044,7 @@ resolver.define('scanIssueForPII', async (req) => {
           (h.items || []).forEach(it => {
             for (const val of [it.fromString, it.toString]) {
               for (const f of scanText(val)) {
-                allFindings.push({ issueKey: key, field: `History: ${it.field}`, context: `Changed by ${h.author?.displayName || 'Unknown'} on ${h.created?.slice(0, 10)}`, ...f });
+                allFindings.push({ issueKey: key, summary, updater: h.author?.displayName || '', firstDetected: h.created || firstDetected, field: `History: ${it.field}`, context: `Changed by ${h.author?.displayName || 'Unknown'} on ${h.created?.slice(0, 10)}`, ...f });
               }
             }
           });
@@ -1051,12 +1058,15 @@ resolver.define('scanIssueForPII', async (req) => {
   if (issueKey) {
     await processIssue(issueKey);
   } else {
-    // Scan all issues in a project (last 30 days)
+    // Build JQL: if projectKey given scan that project, otherwise scan all accessible
+    const since = new Date(); since.setDate(since.getDate() - 30);
+    const sinceStr = since.toISOString().slice(0, 10);
+    const jql = projectKey
+      ? `project = "${projectKey}" AND updated >= "${sinceStr}" ORDER BY updated DESC`
+      : `updated >= "${sinceStr}" ORDER BY updated DESC`;
     try {
-      const since = new Date(); since.setDate(since.getDate() - 30);
-      const sinceStr = since.toISOString().slice(0, 10);
       const searchResp = await api.asUser().requestJira(
-        route`/rest/api/3/search/jql?jql=${`project = "${projectKey}" AND updated >= "${sinceStr}"`}&fields=key&maxResults=50`
+        route`/rest/api/3/search/jql?jql=${jql}&fields=key&maxResults=50`
       );
       const searchData = await searchResp.json();
       const keys = (searchData.issues || []).map(i => i.key);
@@ -1110,6 +1120,20 @@ resolver.define('fetchProjectSavedFilters', async (req) => {
     return { filters };
   } catch (e) {
     return { filters: [], error: e.message };
+  }
+});
+
+// ── Fetch all accessible Jira projects (for Security Scanner Space dropdown) ─
+resolver.define('fetchAccessibleProjects', async () => {
+  try {
+    const resp = await api.asUser().requestJira(
+      route`/rest/api/3/project/search?maxResults=100&orderBy=name&expand=`
+    );
+    const data = await resp.json();
+    const projects = (data.values || []).map(p => ({ key: p.key, name: p.name }));
+    return { projects };
+  } catch (e) {
+    return { projects: [], error: e.message };
   }
 });
 
