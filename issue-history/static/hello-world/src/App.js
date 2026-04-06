@@ -4,6 +4,7 @@ import DashboardGadget from "./components/DashboardGadget";
 import DeletedIssues from "./components/DeletedIssues";
 import SavedReports from "./components/SavedReports";
 import AppPermissions from "./components/AppPermissions";
+import SecurityScanner from "./components/SecurityScanner";
 import React from "react";
 import { invoke, view as forgeView } from "@forge/bridge";
 import "./App.css";
@@ -61,6 +62,19 @@ function flatten(history) {
     const author = h.author || "";
     // Skip system-generated entries
     if (!author || author.toLowerCase() === "system") return;
+    // Comment-type entries (added / edited)
+    if (h.type === "comment") {
+      const it = (h.items || [])[0] || {};
+      rows.push({
+        ts: h.timestamp, author,
+        field: "comment",
+        from: it.fromString || "",
+        to: it.toString || "Comment added",
+        type: "comment",
+        commentBody: h.commentBody || "",
+      });
+      return;
+    }
     const items = h.items || [];
     if (!items.length) {
       rows.push({ ts: h.timestamp, author, field: "", from: "", to: "", type: h.type });
@@ -114,7 +128,24 @@ function Val({ v, field, role }) {
   return <span className="change-val">{v}</span>;
 }
 
-function Changes({ from, to, field }) {
+function Changes({ from, to, field, commentBody }) {
+  // Special rendering for comment field
+  if ((field || "").toLowerCase() === "comment") {
+    const isEdit = (from || "").toLowerCase() === "edited";
+    const text = commentBody || to || "";
+    return (
+      <span className="comment-change">
+        <span className={`comment-badge ${isEdit ? "comment-edited" : "comment-added"}`}>
+          {isEdit ? "✏ Edited" : "💬 Added"}
+        </span>
+        {text && (
+          <span className="comment-preview">
+            {text.length > 120 ? text.slice(0, 120) + "…" : text}
+          </span>
+        )}
+      </span>
+    );
+  }
   const hf = from !== null && from !== undefined && from !== "";
   const ht = to   !== null && to   !== undefined && to   !== "";
   if (!hf && !ht) return <em className="nil">&#8212;</em>;
@@ -143,13 +174,74 @@ function doCSV(rows, key) {
 }
 
 function doXLS(rows, key) {
-  const h = ["Date", "Author", "Field", "From", "To"];
   const x = v => String(v || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const html = `<html><head><meta charset="UTF-8"></head><body><table border="1">
-<thead><tr>${h.map(c => `<th>${c}</th>`).join("")}</tr></thead><tbody>
-${rows.map(r => `<tr>${[fmtDate(r.ts), r.author, r.field, r.from, r.to].map(v => `<td>${x(v)}</td>`).join("")}</tr>`).join("")}
-</tbody></table></body></html>`;
-  dlBlob(`${key || "history"}.xls`, "application/vnd.ms-excel", html);
+  const STATUS_COLORS = {
+    "done":"#E3FCEF","closed":"#E3FCEF","resolved":"#E3FCEF",
+    "inprogress":"#DEEBFF","in progress":"#DEEBFF",
+    "todo":"#F4F5F7","to do":"#F4F5F7",
+    "blocked":"#FFEBE6",
+  };
+  const PRI_COLORS = { highest:"#FFEBE6", high:"#FFEBE6", critical:"#FFEBE6", medium:"#FFFAE6", low:"#E3FCEF", lowest:"#E3FCEF" };
+  function fieldBg(field, from, to) {
+    if ((field||"").toLowerCase() === "status") return STATUS_COLORS[(to||"").toLowerCase()] || "#FFFFFF";
+    if ((field||"").toLowerCase() === "priority") return PRI_COLORS[(to||"").toLowerCase()] || "#FFFFFF";
+    if ((field||"").toLowerCase() === "comment") return "#EAE6FF";
+    return "#FFFFFF";
+  }
+  // Summary stats for a second sheet
+  const userMap = {}, fieldMap = {};
+  rows.forEach(r => {
+    userMap[r.author] = (userMap[r.author] || 0) + 1;
+    if (r.field) fieldMap[r.field] = (fieldMap[r.field] || 0) + 1;
+  });
+  const topUsers  = Object.entries(userMap).sort((a,b)=>b[1]-a[1]).slice(0, 10);
+  const topFields = Object.entries(fieldMap).sort((a,b)=>b[1]-a[1]).slice(0, 10);
+
+  const detailRows = rows.map(r => {
+    const bg = fieldBg(r.field, r.from, r.to);
+    return `<tr style="background:${bg}">${[fmtDate(r.ts||r.timestamp), r.author, r.field, r.from, r.to].map(v => `<td style="border:1px solid #DFE1E6;padding:5px 8px">${x(v)}</td>`).join("")}</tr>`;
+  }).join("");
+
+  const summaryRows = [
+    ...topUsers.map(([u,c]) => `<tr><td style="border:1px solid #DFE1E6;padding:5px 8px">User Activity</td><td style="border:1px solid #DFE1E6;padding:5px 8px">${x(u)}</td><td style="border:1px solid #DFE1E6;padding:5px 8px">${c} changes</td></tr>`),
+    ...topFields.map(([f,c]) => `<tr><td style="border:1px solid #DFE1E6;padding:5px 8px">Field</td><td style="border:1px solid #DFE1E6;padding:5px 8px">${x(f)}</td><td style="border:1px solid #DFE1E6;padding:5px 8px">${c} times</td></tr>`),
+  ].join("");
+
+  const HEADER_STYLE = "background:#0052CC;color:#ffffff;font-weight:bold;padding:7px 10px;border:1px solid #0052CC;font-size:12px";
+  const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+<head><meta charset="UTF-8">
+<!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets>
+  <x:ExcelWorksheet><x:Name>Change History</x:Name><x:WorksheetOptions><x:Selected/></x:WorksheetOptions></x:ExcelWorksheet>
+  <x:ExcelWorksheet><x:Name>Summary</x:Name></x:ExcelWorksheet>
+</x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->
+<style>
+  body{font-family:Calibri,Arial,sans-serif;font-size:11px}
+  table{border-collapse:collapse;margin-bottom:24px}
+  .sheet-title{font-size:14px;font-weight:bold;color:#172B4D;margin:12px 0 6px 0}
+</style></head>
+<body>
+<p class="sheet-title">&#128202; ${x(key || "Issue")} — Change History (${rows.length} records)</p>
+<table>
+  <thead><tr>
+    <th style="${HEADER_STYLE};width:130px">Date of Change</th>
+    <th style="${HEADER_STYLE};width:120px">Updated By</th>
+    <th style="${HEADER_STYLE};width:100px">Field</th>
+    <th style="${HEADER_STYLE};width:160px">From</th>
+    <th style="${HEADER_STYLE};width:160px">To</th>
+  </tr></thead>
+  <tbody>${detailRows}</tbody>
+</table>
+<p class="sheet-title">&#128200; Summary — Top Contributors &amp; Changed Fields</p>
+<table>
+  <thead><tr>
+    <th style="${HEADER_STYLE};width:120px">Category</th>
+    <th style="${HEADER_STYLE};width:180px">Name</th>
+    <th style="${HEADER_STYLE};width:100px">Count</th>
+  </tr></thead>
+  <tbody>${summaryRows}</tbody>
+</table>
+</body></html>`;
+  dlBlob(`${key || "history"}-advanced.xls`, "application/vnd.ms-excel", html);
 }
 
 function doPDF(rows, key) {
@@ -675,7 +767,7 @@ function IssueActivityApp() {
                       </div>
                     </td>
                     <td className="td-field">{r.field || "\u2014"}</td>
-                    <td><Changes from={r.from} to={r.to} field={r.field} /></td>
+                    <td><Changes from={r.from} to={r.to} field={r.field} commentBody={r.commentBody} /></td>
                   </tr>
                 );
               })}
@@ -705,9 +797,9 @@ function IssueActivityApp() {
                     : <span> made a change</span>}
                   <span className="s-when"> {fmtDate(r.ts)}</span>
                 </div>
-                {(r.from || r.to) && (
+                {(r.from || r.to || r.commentBody) && (
                   <div className="s-change">
-                    <Changes from={r.from} to={r.to} field={r.field} />
+                    <Changes from={r.from} to={r.to} field={r.field} commentBody={r.commentBody} />
                   </div>
                 )}
               </div>
@@ -756,7 +848,7 @@ function IssueActivityApp() {
                     {selectedChanges.map((r, i) => (
                       <li key={i} className="revert-list-item">
                         <span className="revert-field-name">{r.field || "\u2014"}</span>
-                        <Changes from={r.to} to={r.from} field={r.field} />
+                        <Changes from={r.to} to={r.from} field={r.field} commentBody={r.commentBody} />
                       </li>
                     ))}
                   </ul>
@@ -906,6 +998,10 @@ function ProjectActivityApp() {
   const [fieldF,    setFieldF]    = React.useState("any");
   const [assigneeF, setAssigneeF] = React.useState("any");
   const [sprintF,   setSprintF]   = React.useState("any");
+  const [savedFilters,    setSavedFilters]    = React.useState([]);
+  const [savedFilterId,   setSavedFilterId]   = React.useState("");   // selected Jira filter id
+  const [showFilterMenu,  setShowFilterMenu]  = React.useState(false);
+  const filterMenuRef = React.useRef(null);
   const [search, setSearch] = React.useState("");
   const [asc,    setAsc]    = React.useState(false);
   const [page,     setPage]     = React.useState(1);
@@ -925,10 +1021,21 @@ function ProjectActivityApp() {
   const [revertResults,   setRevertResults]   = React.useState(null);
 
   React.useEffect(() => {
-    const h = e => { if (exportRef.current && !exportRef.current.contains(e.target)) setExportOpen(false); };
+    const h = e => {
+      if (exportRef.current && !exportRef.current.contains(e.target)) setExportOpen(false);
+      if (filterMenuRef.current && !filterMenuRef.current.contains(e.target)) setShowFilterMenu(false);
+    };
     document.addEventListener("mousedown", h);
     return () => document.removeEventListener("mousedown", h);
   }, []);
+
+  // Load saved Jira filters once the project key is known
+  React.useEffect(() => {
+    if (!projectKey) return;
+    invoke("fetchProjectSavedFilters", { projectKey })
+      .then(r => setSavedFilters(r.filters || []))
+      .catch(() => {});
+  }, [projectKey]);
 
   const loadData = React.useCallback(async (daysVal) => {
     try {
@@ -1019,8 +1126,23 @@ function ProjectActivityApp() {
       const q = search.toLowerCase();
       r = r.filter(x => (x.author + x.issueKey + x.summary + x.field + x.from + x.to).toLowerCase().includes(q));
     }
+    // Filter by saved Jira filter: narrow to issue keys that the filter's JQL would match.
+    // We use the filter's JQL text to check issue keys contained in allRows.
+    if (savedFilterId) {
+      const filterObj = savedFilters.find(f => f.id === savedFilterId);
+      if (filterObj && filterObj.jql) {
+        // Build set of issue keys in allRows that match this filter's project scope heuristically.
+        // For a client-side approximation: extract project= references from JQL and narrow keys.
+        const jqlUp = filterObj.jql.toUpperCase();
+        const projMatch = jqlUp.match(/PROJECT\s*=\s*"?([A-Z0-9]+)"?/);
+        if (projMatch) {
+          const projPrefix = projMatch[1].toUpperCase() + "-";
+          r = r.filter(x => (x.issueKey || "").toUpperCase().startsWith(projPrefix));
+        }
+      }
+    }
     return [...r].sort((a, b) => { const d = new Date(b.timestamp) - new Date(a.timestamp); return asc ? -d : d; });
-  }, [allRows, userF, keyF, fieldF, assigneeF, sprintF, search, asc]);
+  }, [allRows, userF, keyF, fieldF, assigneeF, sprintF, savedFilterId, savedFilters, search, asc]);
 
   const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
   const pagedRows  = rows.slice((page - 1) * pageSize, page * pageSize);
@@ -1040,10 +1162,57 @@ function ProjectActivityApp() {
     dlBlob(`${projectKey || "project"}-history.csv`, "text/csv;charset=utf-8;", "\uFEFF" + csv);
   }
   function doExportXLS() {
-    const h = ["Date", "Key", "Summary", "Author", "Field", "From", "To"];
     const x = v => String(v || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    const html = `<html><head><meta charset="UTF-8"></head><body><table border="1"><thead><tr>${h.map(c => `<th>${c}</th>`).join("")}</tr></thead><tbody>${rows.map(r => `<tr>${[fmtDate(r.timestamp), r.issueKey, r.summary, r.author, r.field, r.from, r.to].map(v => `<td>${x(v)}</td>`).join("")}</tr>`).join("")}</tbody></table></body></html>`;
-    dlBlob(`${projectKey || "project"}-history.xls`, "application/vnd.ms-excel", html);
+    const STATUS_COLORS = { "done":"#E3FCEF","closed":"#E3FCEF","resolved":"#E3FCEF","inprogress":"#DEEBFF","in progress":"#DEEBFF","todo":"#F4F5F7","to do":"#F4F5F7","blocked":"#FFEBE6" };
+    const PRI_COLORS = { highest:"#FFEBE6",high:"#FFEBE6",critical:"#FFEBE6",medium:"#FFFAE6",low:"#E3FCEF",lowest:"#E3FCEF" };
+    // Build user/key/sprint summary stats
+    const userMap={}, keyMap={}, sprintMap={};
+    rows.forEach(r => {
+      userMap[r.author] = (userMap[r.author]||0)+1;
+      keyMap[r.issueKey] = (keyMap[r.issueKey]||0)+1;
+      if (r.sprint) sprintMap[r.sprint] = (sprintMap[r.sprint]||0)+1;
+    });
+    const topUsers   = Object.entries(userMap).sort((a,b)=>b[1]-a[1]).slice(0,10);
+    const topIssues  = Object.entries(keyMap).sort((a,b)=>b[1]-a[1]).slice(0,10);
+    const topSprints = Object.entries(sprintMap).sort((a,b)=>b[1]-a[1]).slice(0,5);
+    const HEADER_STYLE = "background:#0052CC;color:#ffffff;font-weight:bold;padding:7px 10px;border:1px solid #0052CC;font-size:12px";
+    const detailRows = rows.map(r => {
+      const fieldLow = (r.field||"").toLowerCase();
+      let bg = "#FFFFFF";
+      if (fieldLow === "status")   bg = STATUS_COLORS[(r.to||"").toLowerCase()] || "#FFFFFF";
+      if (fieldLow === "priority") bg = PRI_COLORS[(r.to||"").toLowerCase()] || "#FFFFFF";
+      if (fieldLow === "comment")  bg = "#EAE6FF";
+      return `<tr style="background:${bg}">${[fmtDate(r.timestamp),r.issueKey,r.summary,r.author,r.field,r.from,r.to].map(v=>`<td style="border:1px solid #DFE1E6;padding:5px 8px">${x(v)}</td>`).join("")}</tr>`;
+    }).join("");
+    const summaryRows = [
+      ...topUsers.map(([u,c]) => `<tr><td style="border:1px solid #DFE1E6;padding:5px 8px">User</td><td style="border:1px solid #DFE1E6;padding:5px 8px">${x(u)}</td><td style="border:1px solid #DFE1E6;padding:5px 8px">${c}</td></tr>`),
+      ...topIssues.map(([k,c]) => `<tr><td style="border:1px solid #DFE1E6;padding:5px 8px">Issue</td><td style="border:1px solid #DFE1E6;padding:5px 8px">${x(k)}</td><td style="border:1px solid #DFE1E6;padding:5px 8px">${c}</td></tr>`),
+      ...topSprints.map(([s,c]) => `<tr><td style="border:1px solid #DFE1E6;padding:5px 8px">Sprint</td><td style="border:1px solid #DFE1E6;padding:5px 8px">${x(s)}</td><td style="border:1px solid #DFE1E6;padding:5px 8px">${c}</td></tr>`),
+    ].join("");
+    const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+<head><meta charset="UTF-8">
+<!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets>
+  <x:ExcelWorksheet><x:Name>Activity</x:Name><x:WorksheetOptions><x:Selected/></x:WorksheetOptions></x:ExcelWorksheet>
+  <x:ExcelWorksheet><x:Name>Summary</x:Name></x:ExcelWorksheet>
+</x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->
+<style>body{font-family:Calibri,Arial,sans-serif;font-size:11px}table{border-collapse:collapse;margin-bottom:24px}.sheet-title{font-size:14px;font-weight:bold;color:#172B4D;margin:12px 0 6px}</style></head>
+<body>
+<p class="sheet-title">&#128202; ${x(projectKey||"Project")} — Activity Report (${rows.length} changes)</p>
+<table>
+  <thead><tr>
+    <th style="${HEADER_STYLE};width:130px">Date</th><th style="${HEADER_STYLE};width:70px">Key</th>
+    <th style="${HEADER_STYLE};width:160px">Summary</th><th style="${HEADER_STYLE};width:120px">Author</th>
+    <th style="${HEADER_STYLE};width:100px">Field</th><th style="${HEADER_STYLE};width:130px">From</th>
+    <th style="${HEADER_STYLE};width:130px">To</th>
+  </tr></thead><tbody>${detailRows}</tbody>
+</table>
+<p class="sheet-title">&#128200; Summary</p>
+<table>
+  <thead><tr><th style="${HEADER_STYLE};width:80px">Category</th><th style="${HEADER_STYLE};width:180px">Name</th><th style="${HEADER_STYLE};width:80px">Changes</th></tr></thead>
+  <tbody>${summaryRows}</tbody>
+</table>
+</body></html>`;
+    dlBlob(`${projectKey||"project"}-advanced.xls`, "application/vnd.ms-excel", html);
   }
 
   // ── Permission enforcement flags (null perms = not yet loaded → default allow) ──
@@ -1093,16 +1262,17 @@ function ProjectActivityApp() {
   }
 
   // ── Saved Reports: snapshot + restore ──────────────────────────────────
-  const currentFilters = { userF, keyF, fieldF, assigneeF, sprintF, search, asc, daysInput };
+  const currentFilters = { userF, keyF, fieldF, assigneeF, sprintF, savedFilterId, search, asc, daysInput };
 
   function handleLoadReport(report) {
     const f = report.filters || {};
-    if (f.userF       !== undefined) setUserF(f.userF);
-    if (f.keyF        !== undefined) setKeyF(f.keyF);
-    if (f.fieldF      !== undefined) setFieldF(f.fieldF);
-    if (f.assigneeF   !== undefined) setAssigneeF(f.assigneeF);
-    if (f.sprintF     !== undefined) setSprintF(f.sprintF);
-    if (f.search      !== undefined) setSearch(f.search);
+    if (f.userF         !== undefined) setUserF(f.userF);
+    if (f.keyF          !== undefined) setKeyF(f.keyF);
+    if (f.fieldF        !== undefined) setFieldF(f.fieldF);
+    if (f.assigneeF     !== undefined) setAssigneeF(f.assigneeF);
+    if (f.sprintF       !== undefined) setSprintF(f.sprintF);
+    if (f.savedFilterId !== undefined) setSavedFilterId(f.savedFilterId);
+    if (f.search        !== undefined) setSearch(f.search);
     if (f.asc         !== undefined) setAsc(f.asc);
     if (f.daysInput   !== undefined) { setDaysInput(f.daysInput); loadData(parseInt(f.daysInput) || days); }
     setPage(1);
@@ -1128,11 +1298,23 @@ function ProjectActivityApp() {
             🗑️ Deleted Issues
           </button>
         )}
+        {isAdmin && (
+          <button
+            className={`proj-tab${projView === "security" ? " proj-tab-on" : ""}`}
+            onClick={() => setProjView("security")}>
+            🔐 Security Scanner
+          </button>
+        )}
       </div>
 
       {/* ── Deleted Issues view ── */}
       {projView === "deleted" && (
         <DeletedIssues projectKey={projectKey} />
+      )}
+
+      {/* ── Security Scanner view ── */}
+      {projView === "security" && (
+        <SecurityScanner projectKey={projectKey} mode="project" />
       )}
 
       {/* ── Activity view ── */}
@@ -1156,6 +1338,32 @@ function ProjectActivityApp() {
             onChange={v => { setAssigneeF(v); setPage(1); }} searchable />
           <DDMenu label="Sprint: " opts={sprintOpts} val={sprintF}
             onChange={v => { setSprintF(v); setPage(1); }} />
+          {/* Saved Jira filter picker */}
+          {savedFilters.length > 0 && (
+            <div className="dd-wrap" ref={filterMenuRef} style={{ position: "relative" }}>
+              <button className="dd-btn" onClick={() => setShowFilterMenu(v => !v)}>
+                <span className="dd-prefix">Filter: </span>
+                <span>{savedFilters.find(f => f.id === savedFilterId)?.name || "Any"}</span>
+                <span className="dd-arrow">&#9660;</span>
+              </button>
+              {savedFilterId && (
+                <button className="fh-clear" title="Clear filter"
+                  onClick={e => { e.stopPropagation(); setSavedFilterId(""); setPage(1); }}>&#10005;</button>
+              )}
+              {showFilterMenu && (
+                <ul className="dd-list">
+                  <li className={!savedFilterId ? "dd-active" : ""}
+                    onClick={() => { setSavedFilterId(""); setShowFilterMenu(false); setPage(1); }}>Any</li>
+                  {savedFilters.map(f => (
+                    <li key={f.id} className={savedFilterId === f.id ? "dd-active" : ""}
+                      onClick={() => { setSavedFilterId(f.id); setShowFilterMenu(false); setPage(1); }}>
+                      {f.name}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
           <span className="days-wrap">
             Within the last:
             <input className="days-inp" type="number" min="1" max="365"
@@ -1290,7 +1498,7 @@ function ProjectActivityApp() {
                       </div>
                     </td>
                     <td className="td-field">{r.field || "—"}</td>
-                    <td><Changes from={r.from} to={r.to} field={r.field} /></td>
+                    <td><Changes from={r.from} to={r.to} field={r.field} commentBody={r.commentBody} /></td>
                   </tr>
                 );
               })}
@@ -1331,7 +1539,7 @@ function ProjectActivityApp() {
                     {selectedChanges.map((r, i) => (
                       <li key={i} className="revert-list-item">
                         <span className="revert-field-name">{r.issueKey} &mdash; {r.field || "\u2014"}</span>
-                        <Changes from={r.to} to={r.from} field={r.field} />
+                        <Changes from={r.to} to={r.from} field={r.field} commentBody={r.commentBody} />
                       </li>
                     ))}
                   </ul>
@@ -1353,6 +1561,7 @@ function ProjectActivityApp() {
               )}
             </div>
             <div className="modal-footer">
+
               <button className="ghost-btn" onClick={() => { setShowRevertModal(false); setRevertResults(null); }}>
                 {revertResults ? "Close" : "Cancel"}
               </button>
@@ -1787,10 +1996,56 @@ function GlobalPageApp() {
     dlBlob("issue-history.csv","text/csv;charset=utf-8;","\uFEFF"+csv);
   }
   function doExportXLS() {
-    const h = ["Date of change","Key","Issue Type","Summary","Priority","Status","Updated by","Field","From","To"];
     const x = v => String(v||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-    const html = `<html><head><meta charset="UTF-8"></head><body><table border="1"><thead><tr>${h.map(c=>`<th>${c}</th>`).join("")}</tr></thead><tbody>${filteredRows.map(r=>`<tr>${[fmtDate(r.timestamp),r.issueKey,r.issueType,r.summary,r.priority,r.status,r.author,r.field,r.from,r.to].map(v=>`<td>${x(v)}</td>`).join("")}</tr>`).join("")}</tbody></table></body></html>`;
-    dlBlob("issue-history.xls","application/vnd.ms-excel",html);
+    const STATUS_COLORS = {"done":"#E3FCEF","closed":"#E3FCEF","resolved":"#E3FCEF","inprogress":"#DEEBFF","in progress":"#DEEBFF","todo":"#F4F5F7","to do":"#F4F5F7","blocked":"#FFEBE6"};
+    const PRI_COLORS = {highest:"#FFEBE6",high:"#FFEBE6",critical:"#FFEBE6",medium:"#FFFAE6",low:"#E3FCEF",lowest:"#E3FCEF"};
+    const userMap={}, projMap={}, fieldMap={};
+    filteredRows.forEach(r => {
+      userMap[r.author] = (userMap[r.author]||0)+1;
+      projMap[r.projectKey||r.issueKey?.split("-")[0]] = (projMap[r.projectKey||r.issueKey?.split("-")[0]]||0)+1;
+      if (r.field) fieldMap[r.field] = (fieldMap[r.field]||0)+1;
+    });
+    const topUsers  = Object.entries(userMap).sort((a,b)=>b[1]-a[1]).slice(0,10);
+    const topProjs  = Object.entries(projMap).sort((a,b)=>b[1]-a[1]).slice(0,10);
+    const topFields = Object.entries(fieldMap).sort((a,b)=>b[1]-a[1]).slice(0,10);
+    const HEADER_STYLE = "background:#0052CC;color:#fff;font-weight:bold;padding:7px 10px;border:1px solid #0052CC;font-size:12px";
+    const detailRows = filteredRows.map(r => {
+      const statusBg = STATUS_COLORS[(r.status||"").toLowerCase()]||"#FFFFFF";
+      const priBg    = PRI_COLORS[(r.priority||"").toLowerCase()]||"#FFFFFF";
+      const fieldBg  = (r.field||"").toLowerCase()==="comment"?"#EAE6FF":"#FFFFFF";
+      const rowBg    = fieldBg !== "#FFFFFF" ? fieldBg : statusBg !== "#FFFFFF" ? statusBg : "#FFFFFF";
+      return `<tr style="background:${rowBg}">${[fmtDate(r.timestamp),r.issueKey,r.issueType,r.summary,r.priority,r.status,r.author,r.field,r.from,r.to].map(v=>`<td style="border:1px solid #DFE1E6;padding:5px 8px">${x(v)}</td>`).join("")}</tr>`;
+    }).join("");
+    const summaryRows = [
+      ...topUsers.map(([u,c])=>`<tr><td style="border:1px solid #DFE1E6;padding:5px 8px">User</td><td style="border:1px solid #DFE1E6;padding:5px 8px">${x(u)}</td><td style="border:1px solid #DFE1E6;padding:5px 8px">${c}</td></tr>`),
+      ...topProjs.map(([p,c])=>`<tr><td style="border:1px solid #DFE1E6;padding:5px 8px">Project</td><td style="border:1px solid #DFE1E6;padding:5px 8px">${x(p)}</td><td style="border:1px solid #DFE1E6;padding:5px 8px">${c}</td></tr>`),
+      ...topFields.map(([f,c])=>`<tr><td style="border:1px solid #DFE1E6;padding:5px 8px">Field</td><td style="border:1px solid #DFE1E6;padding:5px 8px">${x(f)}</td><td style="border:1px solid #DFE1E6;padding:5px 8px">${c}</td></tr>`),
+    ].join("");
+    const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+<head><meta charset="UTF-8">
+<!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets>
+  <x:ExcelWorksheet><x:Name>History</x:Name><x:WorksheetOptions><x:Selected/></x:WorksheetOptions></x:ExcelWorksheet>
+  <x:ExcelWorksheet><x:Name>Summary</x:Name></x:ExcelWorksheet>
+</x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->
+<style>body{font-family:Calibri,Arial,sans-serif;font-size:11px}table{border-collapse:collapse;margin-bottom:24px}.sheet-title{font-size:14px;font-weight:bold;color:#172B4D;margin:12px 0 6px}</style></head>
+<body>
+<p class="sheet-title">&#128202; Issue History — Advanced Report (${filteredRows.length} changes)</p>
+<table>
+  <thead><tr>
+    <th style="${HEADER_STYLE};width:130px">Date</th><th style="${HEADER_STYLE};width:70px">Key</th>
+    <th style="${HEADER_STYLE};width:90px">Type</th><th style="${HEADER_STYLE};width:160px">Summary</th>
+    <th style="${HEADER_STYLE};width:80px">Priority</th><th style="${HEADER_STYLE};width:80px">Status</th>
+    <th style="${HEADER_STYLE};width:120px">Updated By</th><th style="${HEADER_STYLE};width:100px">Field</th>
+    <th style="${HEADER_STYLE};width:130px">From</th><th style="${HEADER_STYLE};width:130px">To</th>
+  </tr></thead><tbody>${detailRows}</tbody>
+</table>
+<p class="sheet-title">&#128200; Summary</p>
+<table>
+  <thead><tr><th style="${HEADER_STYLE};width:80px">Category</th><th style="${HEADER_STYLE};width:180px">Name</th><th style="${HEADER_STYLE};width:80px">Changes</th></tr></thead>
+  <tbody>${summaryRows}</tbody>
+</table>
+</body></html>`;
+    dlBlob("issue-history-advanced.xls","application/vnd.ms-excel",html);
   }
 
   const modeLabel = GL_SELECT_MODES.find(m => m.value === selectMode)?.label || "Space";
@@ -1990,6 +2245,8 @@ function GlobalPageApp() {
       <div className="proj-tabs">
         <button className={`proj-tab${glView === "activity" ? " proj-tab-on" : ""}`}
           onClick={() => setGlView("activity")}>&#9776; Activity</button>
+        <button className={`proj-tab${glView === "security" ? " proj-tab-on" : ""}`}
+          onClick={() => setGlView("security")}>🔐 Security Scanner</button>
         <button className={`proj-tab${glView === "permissions" ? " proj-tab-on" : ""}`}
           onClick={() => setGlView("permissions")}>&#9881; Permissions</button>
       </div>
@@ -1997,6 +2254,14 @@ function GlobalPageApp() {
       {/* ── Permissions view ── */}
       {glView === "permissions" && (
         <AppPermissions projectKey="_global" />
+      )}
+
+      {/* ── Security Scanner view ── */}
+      {glView === "security" && (
+        <SecurityScanner
+          projectKey={projectKey !== "all" ? projectKey : undefined}
+          mode={projectKey !== "all" ? "project" : "project"}
+        />
       )}
 
       {/* ── Activity view ── */}
@@ -2327,7 +2592,7 @@ function GlobalPageApp() {
                       {visibleCols.has("priority")  && <td><GlPriorityBadge v={group.priority}/></td>}
                       {visibleCols.has("status")    && <td>{group.status ? <span className="status-badge" style={{ background: statusColor(group.status) }}>{group.status.toUpperCase()}</span> : "—"}</td>}
                       {visibleCols.has("field")     && <td className="td-field">{r.field || "—"}</td>}
-                      {visibleCols.has("changes")   && <td><Changes from={r.from} to={r.to} field={r.field}/></td>}
+                      {visibleCols.has("changes")   && <td><Changes from={r.from} to={r.to} field={r.field} commentBody={r.commentBody}/></td>}
                     </tr>
                   );
                 });
@@ -2371,7 +2636,7 @@ function GlobalPageApp() {
                     {glSelectedChanges.map((r, i) => (
                       <li key={i} className="revert-list-item">
                         <span className="revert-field-name">{r.issueKey} &mdash; {r.field || "\u2014"}</span>
-                        <Changes from={r.to} to={r.from} field={r.field} />
+                        <Changes from={r.to} to={r.from} field={r.field} commentBody={r.commentBody} />
                       </li>
                     ))}
                   </ul>

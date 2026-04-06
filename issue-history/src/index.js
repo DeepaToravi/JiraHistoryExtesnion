@@ -1,7 +1,7 @@
 import Resolver from '@forge/resolver';
 import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
-import { issueUpdated, issueDeleted } from './events';
+import { issueUpdated, issueDeleted, issueCreated } from './events';
 
 const resolver = new Resolver();
 
@@ -23,15 +23,46 @@ resolver.define('fetchHistory', async (req) => {
 
     console.log(`Issue: ${issueKey}`);
 
-    // Fetch Jira history
+    // Fetch Jira history + comments in parallel
     let jiraHistory = [];
+    let commentHistory = [];
     try {
-      const response = await api.asUser().requestJira(
-        route`/rest/api/3/issue/${issueKey}?expand=changelog`
-      );
-      const data = await response.json();
-      jiraHistory = data.changelog?.histories || [];
+      const [issueResp, commentsResp] = await Promise.all([
+        api.asUser().requestJira(route`/rest/api/3/issue/${issueKey}?expand=changelog`),
+        api.asUser().requestJira(route`/rest/api/3/issue/${issueKey}/comment?maxResults=100&orderBy=created`),
+      ]);
+      const issueData = await issueResp.json();
+      jiraHistory = issueData.changelog?.histories || [];
       console.log(`Jira history: ${jiraHistory.length} records`);
+
+      // Build comment change records — detect edits (created ≠ updated)
+      const commentsData = await commentsResp.json();
+      (commentsData.comments || []).forEach(c => {
+        const authorName = c.author?.displayName || 'System';
+        const createdTs  = c.created;
+        const updatedTs  = c.updated;
+        const currentText = extractAdfText(c.body);
+        // Always record ADDED comment
+        commentHistory.push({
+          timestamp: createdTs,
+          author: authorName,
+          items: [{ field: 'comment', fromString: '', toString: currentText || 'Comment added' }],
+          type: 'comment',
+          commentBody: currentText,
+        });
+        // Record EDITED if updated is meaningfully later than created (> 5 seconds)
+        if (updatedTs && new Date(updatedTs) - new Date(createdTs) > 5000) {
+          const editorName = c.updateAuthor?.displayName || authorName;
+          commentHistory.push({
+            timestamp: updatedTs,
+            author: editorName,
+            items: [{ field: 'comment', fromString: 'edited', toString: currentText || 'Comment edited' }],
+            type: 'comment',
+            commentBody: currentText,
+          });
+        }
+      });
+      console.log(`Comment history: ${commentHistory.length} records`);
     } catch (e) {
       console.error('Error fetching Jira history:', e);
     }
@@ -46,7 +77,7 @@ resolver.define('fetchHistory', async (req) => {
       console.error('Error fetching KVS history:', e);
     }
 
-    // Format Jira history
+    // Format Jira changelog history
     const formatted = jiraHistory.map(h => ({
       timestamp: h.created,
       author: h.author?.displayName || 'System',
@@ -55,7 +86,7 @@ resolver.define('fetchHistory', async (req) => {
     }));
 
     // Combine all
-    const all = [...formatted, ...kvsHistory].sort((a, b) => 
+    const all = [...formatted, ...commentHistory, ...kvsHistory].sort((a, b) => 
       new Date(b.timestamp) - new Date(a.timestamp)
     );
 
@@ -249,6 +280,7 @@ resolver.define('restoreDeletedIssue', async (req) => {
     const record = await kvs.get(kvKey);
     if (!record) return { success: false, error: 'Deleted record not found. It may have already been restored or purged.' };
 
+    // Build the full issue body from every stored field
     const body = {
       fields: {
         project:   { key: projectKey },
@@ -256,10 +288,28 @@ resolver.define('restoreDeletedIssue', async (req) => {
         issuetype: { name: record.issueType || 'Task' },
       },
     };
-    if (record.priority) body.fields.priority = { name: record.priority };
+    if (record.priority)    body.fields.priority    = { name: record.priority };
     if (record.labels && record.labels.length) body.fields.labels = record.labels;
+    if (record.description) {
+      // description may be plain text or an ADF object snapshot
+      if (typeof record.description === 'object') {
+        body.fields.description = record.description;
+      } else {
+        body.fields.description = {
+          type: 'doc', version: 1,
+          content: [{ type: 'paragraph', content: [{ type: 'text', text: String(record.description) }] }],
+        };
+      }
+    }
+    if (record.assigneeId) body.fields.assignee    = { accountId: record.assigneeId };
+    if (record.reporterId) body.fields.reporter    = { id: record.reporterId };
+    if (Array.isArray(record.components) && record.components.length)
+      body.fields.components = record.components.map(c => (typeof c === 'string' ? { name: c } : c));
+    if (Array.isArray(record.fixVersions) && record.fixVersions.length)
+      body.fields.fixVersions = record.fixVersions.map(v => (typeof v === 'string' ? { name: v } : v));
 
-    const response = await api.asUser().requestJira(route`/rest/api/3/issue`, {
+    // Use asApp() so reporter and other permission-restricted fields can be set
+    const response = await api.asApp().requestJira(route`/rest/api/3/issue`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -267,9 +317,26 @@ resolver.define('restoreDeletedIssue', async (req) => {
 
     const data = await response.json();
     if (response.status === 201) {
+      const newKey = data.key;
+      // Add a comment on the new issue linking it to the original key
+      try {
+        await api.asApp().requestJira(route`/rest/api/3/issue/${newKey}/comment`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            body: {
+              type: 'doc', version: 1,
+              content: [{ type: 'paragraph', content: [{
+                type: 'text',
+                text: `This issue was restored from deleted issue ${issueKey} by the Issue History app. Original deletion recorded at: ${record.deletedAt || 'unknown'}.`,
+              }] }],
+            },
+          }),
+        });
+      } catch (_) { /* non-fatal */ }
       await kvs.delete(kvKey);
-      console.log(`✅ Restored ${issueKey} as ${data.key}`);
-      return { success: true, newKey: data.key };
+      console.log(`✅ Restored ${issueKey} as ${newKey}`);
+      return { success: true, newKey, originalKey: issueKey };
     }
     return { success: false, error: JSON.stringify(data.errors || data) };
   } catch (e) {
@@ -897,7 +964,155 @@ resolver.define('fetchIssueFields', async () => {
   }
 });
 
+// ── Security Scanner / PII & DLP ────────────────────────────────────────────
+// Scans issue fields and change history for sensitive data patterns.
+// Returns a list of findings: { issueKey, field, snippet, pattern, severity }
+
+const PII_PATTERNS = [
+  { name: 'Email Address',      regex: /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g,         severity: 'high'   },
+  { name: 'Credit Card Number', regex: /\b(?:\d[ \-]?){13,16}\b/g,                                    severity: 'critical' },
+  { name: 'Phone Number',       regex: /\b(?:\+?\d[\d\s\-().]{7,}\d)\b/g,                             severity: 'medium' },
+  { name: 'IP Address',         regex: /\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g,                    severity: 'medium' },
+  { name: 'SSN (US)',           regex: /\b\d{3}[\-\s]?\d{2}[\-\s]?\d{4}\b/g,                         severity: 'critical' },
+  { name: 'Passport / ID',      regex: /\b[A-Z]{1,2}\d{6,9}\b/g,                                     severity: 'high'   },
+  { name: 'API Key / Token',    regex: /(?:api[_\-]?key|token|secret|password|bearer)\s*[=:]\s*\S+/gi, severity: 'critical' },
+  { name: 'IBAN',               regex: /\b[A-Z]{2}\d{2}[A-Z0-9]{4}\d{7}(?:[A-Z0-9]{0,16})?\b/g,     severity: 'high'   },
+];
+
+function scanText(text) {
+  const findings = [];
+  if (!text || typeof text !== 'string') return findings;
+  for (const { name, regex, severity } of PII_PATTERNS) {
+    const matches = text.match(regex);
+    if (matches) {
+      findings.push({
+        pattern:  name,
+        severity,
+        snippet:  matches[0].slice(0, 60) + (matches[0].length > 60 ? '…' : ''),
+        count:    matches.length,
+      });
+    }
+  }
+  return findings;
+}
+
+resolver.define('scanIssueForPII', async (req) => {
+  const { issueKey, projectKey, scanScope = 'current' } = req.payload || {};
+  if (!issueKey && !projectKey) return { findings: [], error: 'No issueKey or projectKey provided' };
+
+  const allFindings = [];
+
+  const processIssue = async (key) => {
+    try {
+      const [issueResp, commentsResp] = await Promise.all([
+        api.asUser().requestJira(route`/rest/api/3/issue/${key}?expand=changelog&fields=summary,description,comment`),
+        api.asUser().requestJira(route`/rest/api/3/issue/${key}/comment?maxResults=50`),
+      ]);
+      const issue = await issueResp.json();
+      const fields = issue.fields || {};
+
+      // Scan current field values
+      const currentFields = {
+        Summary:     fields.summary || '',
+        Description: extractAdfText(fields.description),
+      };
+      for (const [fieldName, value] of Object.entries(currentFields)) {
+        for (const f of scanText(value)) {
+          allFindings.push({ issueKey: key, field: fieldName, context: 'Current value', ...f });
+        }
+      }
+
+      // Scan comments
+      const commentsData = await commentsResp.json();
+      (commentsData.comments || []).forEach(c => {
+        const text = extractAdfText(c.body);
+        for (const f of scanText(text)) {
+          allFindings.push({ issueKey: key, field: 'Comment', context: `By ${c.author?.displayName || 'Unknown'} on ${c.created?.slice(0, 10)}`, ...f });
+        }
+      });
+
+      // Scan changelog history (fromString / toString)
+      if (scanScope === 'history') {
+        (issue.changelog?.histories || []).forEach(h => {
+          (h.items || []).forEach(it => {
+            for (const val of [it.fromString, it.toString]) {
+              for (const f of scanText(val)) {
+                allFindings.push({ issueKey: key, field: `History: ${it.field}`, context: `Changed by ${h.author?.displayName || 'Unknown'} on ${h.created?.slice(0, 10)}`, ...f });
+              }
+            }
+          });
+        });
+      }
+    } catch (e) {
+      console.error(`PII scan error for ${key}:`, e.message);
+    }
+  };
+
+  if (issueKey) {
+    await processIssue(issueKey);
+  } else {
+    // Scan all issues in a project (last 30 days)
+    try {
+      const since = new Date(); since.setDate(since.getDate() - 30);
+      const sinceStr = since.toISOString().slice(0, 10);
+      const searchResp = await api.asUser().requestJira(
+        route`/rest/api/3/search/jql?jql=${`project = "${projectKey}" AND updated >= "${sinceStr}"`}&fields=key&maxResults=50`
+      );
+      const searchData = await searchResp.json();
+      const keys = (searchData.issues || []).map(i => i.key);
+      // Process in batches of 5
+      for (let i = 0; i < keys.length; i += 5) {
+        await Promise.all(keys.slice(i, i + 5).map(processIssue));
+      }
+    } catch (e) {
+      console.error('PII scan project search error:', e.message);
+    }
+  }
+
+  allFindings.sort((a, b) => {
+    const sev = { critical: 0, high: 1, medium: 2, low: 3 };
+    return (sev[a.severity] ?? 4) - (sev[b.severity] ?? 4);
+  });
+
+  return { findings: allFindings, total: allFindings.length };
+});
+
+function extractAdfText(node) {
+  if (!node) return '';
+  if (typeof node === 'string') return node;
+  if (node.text) return node.text;
+  if (node.content && Array.isArray(node.content)) {
+    return node.content.map(extractAdfText).join(' ');
+  }
+  return '';
+}
+
+// ── Fetch saved Jira filters for the project-page filter selector ─────────
+// (already exists as fetchSavedFilters above; this resolver extends it to also
+//  accept a projectKey hint and return recently-used filters for that project)
+resolver.define('fetchProjectSavedFilters', async (req) => {
+  const { projectKey } = req.payload || {};
+  try {
+    const resp = await api.asUser().requestJira(
+      route`/rest/api/3/filter/my?expand=jql&maxResults=50`
+    );
+    const data = await resp.json();
+    let filters = (Array.isArray(data) ? data : [])
+      .map(f => ({ id: String(f.id), name: f.name, jql: f.jql || '' }));
+    // Put filters mentioning the project first
+    if (projectKey) {
+      const upper = projectKey.toUpperCase();
+      filters = [
+        ...filters.filter(f => f.jql.toUpperCase().includes(upper)),
+        ...filters.filter(f => !f.jql.toUpperCase().includes(upper)),
+      ];
+    }
+    return { filters };
+  } catch (e) {
+    return { filters: [], error: e.message };
+  }
+});
+
 export const handler = resolver.getDefinitions();
-export { issueUpdated, issueDeleted };
-export const issueCreated = async () => {};
+export { issueCreated, issueUpdated, issueDeleted };
 
