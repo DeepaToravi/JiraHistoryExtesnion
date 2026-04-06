@@ -971,7 +971,7 @@ resolver.define('fetchIssueFields', async () => {
 const PII_PATTERNS = [
   { name: 'Email Address',      regex: /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g,         severity: 'high'     },
   { name: 'Credit Card Number', regex: /\b(?:\d[ \-]?){13,16}\b/g,                                    severity: 'critical' },
-  { name: 'Phone Number',       regex: /\b(?:\+?\d[\d\s\-().]{7,}\d)\b/g,                             severity: 'medium'   },
+  { name: 'Phone Number',       regex: /\b(?:\+?\d[\d\s\-().]{7,}\d)\b/g,                             severity: 'medium',  exclude: /^\d{4}[-\/]\d{2}[-\/]\d{2}/ },
   { name: 'IP Address',         regex: /\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g,                    severity: 'medium'   },
   { name: 'SSN (US)',           regex: /\b\d{3}[\-\s]?\d{2}[\-\s]?\d{4}\b/g,                         severity: 'critical' },
   { name: 'Passport / ID',      regex: /\b[A-Z]{1,2}\d{6,9}\b/g,                                     severity: 'high'     },
@@ -983,15 +983,17 @@ const PII_PATTERNS = [
 function scanText(text) {
   const findings = [];
   if (!text || typeof text !== 'string') return findings;
-  for (const { name, regex, severity } of PII_PATTERNS) {
+  for (const { name, regex, severity, exclude } of PII_PATTERNS) {
     const matches = text.match(regex);
     if (matches) {
+      const valid = exclude ? matches.filter(m => !exclude.test(m)) : matches;
+      if (!valid.length) continue;
       findings.push({
         pattern:     name,
         severity,
-        actualValue: matches[0],                                                       // exact matched value
-        snippet:     matches[0].slice(0, 60) + (matches[0].length > 60 ? '…' : ''),   // backward compat
-        count:       matches.length,
+        actualValue: valid[0],                                                         // exact matched value
+        snippet:     valid[0].slice(0, 60) + (valid[0].length > 60 ? '…' : ''),       // backward compat
+        count:       valid.length,
       });
     }
   }
@@ -1134,6 +1136,21 @@ resolver.define('fetchAccessibleProjects', async () => {
     return { projects };
   } catch (e) {
     return { projects: [], error: e.message };
+  }
+});
+
+resolver.define('fetchJiraUsers', async () => {
+  try {
+    const resp = await api.asUser().requestJira(
+      route`/rest/api/3/users/search?maxResults=200`
+    );
+    const data = await resp.json();
+    const users = (Array.isArray(data) ? data : [])
+      .filter(u => u.accountType === 'atlassian' && u.displayName)
+      .map(u => ({ accountId: u.accountId, displayName: u.displayName }));
+    return { users };
+  } catch (e) {
+    return { users: [], error: e.message };
   }
 });
 

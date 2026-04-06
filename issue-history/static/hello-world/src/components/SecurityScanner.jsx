@@ -45,11 +45,25 @@ export default function SecurityScanner({ projectKey, mode = "global" }) {
   const [error,     setError]     = React.useState(null);
   const [scanScope, setScanScope] = React.useState("current");
   const [projects,  setProjects]  = React.useState([]);
+  const [jiraUsers, setJiraUsers] = React.useState([]);
+
+  // Static list of all known PII pattern names (mirrors PII_PATTERNS in backend)
+  const KNOWN_PATTERNS = [
+    "Email Address", "Credit Card Number", "Phone Number", "IP Address",
+    "SSN (US)", "Passport / ID", "API Key / Token", "IBAN", "ZIP / Postal Code",
+  ];
 
   // Fetch available projects on mount to populate Space dropdown
   React.useEffect(() => {
     invoke("fetchAccessibleProjects").then(res => {
       if (res.projects) setProjects(res.projects);
+    }).catch(() => {});
+  }, []);
+
+  // Fetch Jira users on mount to populate Updated By dropdown
+  React.useEffect(() => {
+    invoke("fetchJiraUsers").then(res => {
+      if (res.users) setJiraUsers(res.users.map(u => u.displayName).filter(Boolean).sort());
     }).catch(() => {});
   }, []);
 
@@ -63,12 +77,17 @@ export default function SecurityScanner({ projectKey, mode = "global" }) {
   const [fSearch,  setFSearch]  = React.useState("");
   const [perPage,  setPerPage]  = React.useState(100);
 
-  const allUpdaters = React.useMemo(() =>
-    [...new Set(findings.map(f => f.updater).filter(Boolean))].sort(),
-  [findings]);
-  const allPatterns = React.useMemo(() =>
-    [...new Set(findings.map(f => f.pattern))].sort(),
-  [findings]);
+  // Merge static known patterns with any new ones found in scan results
+  const allPatterns = React.useMemo(() => {
+    const fromFindings = findings.map(f => f.pattern).filter(Boolean);
+    return [...new Set([...KNOWN_PATTERNS, ...fromFindings])].sort();
+  }, [findings]);
+
+  // Merge pre-fetched Jira users with any additional updaters found in scan results
+  const allUpdaters = React.useMemo(() => {
+    const fromFindings = findings.map(f => f.updater).filter(Boolean);
+    return [...new Set([...jiraUsers, ...fromFindings])].sort();
+  }, [findings, jiraUsers]);
 
   async function runScan() {
     setLoading(true); setError(null); setFindings([]); setScanned(false);
