@@ -1154,6 +1154,218 @@ resolver.define('fetchJiraUsers', async () => {
   }
 });
 
+// ── Search Jira issues by key or summary (for the Share-to-work-item picker) ─────────
+resolver.define('searchJiraIssues', async (req) => {
+  const { query = '' } = req.payload || {};
+  if (!query.trim()) return { issues: [] };
+  try {
+    let jql;
+    // Exact issue-key lookup (e.g. "KAN-5") gets priority
+    if (/^[A-Z]+-\d+$/i.test(query.trim())) {
+      jql = `issue = "${query.trim()}" ORDER BY updated DESC`;
+    } else {
+      jql = `summary ~ "${query.trim()}" ORDER BY updated DESC`;
+    }
+    const resp = await api.asUser().requestJira(
+      route`/rest/api/3/search/jql?jql=${jql}&fields=summary,issuetype,status&maxResults=10`
+    );
+    const data = await resp.json();
+    const issues = (data.issues || []).map(i => ({
+      key:     i.key,
+      summary: i.fields?.summary || '',
+      type:    i.fields?.issuetype?.name || '',
+      status:  i.fields?.status?.name   || '',
+    }));
+    return { issues };
+  } catch (e) {
+    return { issues: [], error: e.message };
+  }
+});
+
+// ── Post a comment with mentions + share-link to a target Jira work item ──────────────
+resolver.define('shareToJiraIssue', async (req) => {
+  const {
+    targetIssueKey,
+    mentions    = [],   // [{ accountId, displayName }]
+    message     = '',
+    shareUrl    = '',
+    reportTitle = 'Issue History Report',
+  } = req.payload || {};
+
+  if (!targetIssueKey) return { success: false, error: 'No target issue key provided' };
+
+  // Build the ADF comment body
+  const contentNodes = [];
+
+  // Opening summary line
+  contentNodes.push({
+    type: 'paragraph',
+    content: [
+      { type: 'text', text: '\uD83D\uDCCA Shared ' },
+      { type: 'text', text: reportTitle, marks: [{ type: 'strong' }] },
+    ],
+  });
+
+  // Optional user message
+  if (message.trim()) {
+    contentNodes.push({
+      type: 'paragraph',
+      content: [{ type: 'text', text: message.trim() }],
+    });
+  }
+
+  // Share link
+  if (shareUrl) {
+    contentNodes.push({
+      type: 'paragraph',
+      content: [
+        { type: 'text', text: 'View report: ' },
+        { type: 'text', text: shareUrl, marks: [{ type: 'link', attrs: { href: shareUrl } }] },
+      ],
+    });
+  }
+
+  // @mentions paragraph
+  if (mentions.length > 0) {
+    const mentionContent = [];
+    mentions.forEach((m, idx) => {
+      if (idx > 0) mentionContent.push({ type: 'text', text: ' ' });
+      mentionContent.push({
+        type: 'mention',
+        attrs: { id: m.accountId, text: `@${m.displayName}`, accessLevel: 'APPLICATION' },
+      });
+    });
+    contentNodes.push({ type: 'paragraph', content: mentionContent });
+  }
+
+  const commentBody = { type: 'doc', version: 1, content: contentNodes };
+
+  try {
+    const resp = await api.asUser().requestJira(
+      route`/rest/api/3/issue/${targetIssueKey}/comment`,
+      {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ body: commentBody }),
+      }
+    );
+    if (resp.status === 201 || resp.status === 200) return { success: true };
+    const data = await resp.json();
+    return { success: false, error: JSON.stringify(data.errors || data.errorMessages || data) };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// ── Return the Jira site base URL (used to build share links) ─────────────────────────
+resolver.define('getSiteBaseUrl', async () => {
+  try {
+    const resp = await api.asUser().requestJira(route`/rest/api/3/serverInfo`);
+    const data = await resp.json();
+    return { baseUrl: data.baseUrl || '' };
+  } catch (e) {
+    return { baseUrl: '', error: e.message };
+  }
+});
+
+// ── Share via email: posts a comment on MY profile issue / a chosen issue,
+//    @mentioning each recipient so Jira sends them a real email notification. ───────────
+// Since Forge has no outbound SMTP, we use Jira's built-in mention-notification system:
+// post an ADF comment with @mention nodes on the current user's personal page or a
+// dedicated "share" issue supplied by the caller. If no targetIssueKey is supplied we
+// fall back to creating the share notification as a comment on any recently-updated
+// issue the caller has access to (first from history). Either way, Jira will email
+// every @mentioned user automatically.
+resolver.define('shareViaEmailComment', async (req) => {
+  const {
+    recipients  = [],   // [{ accountId, displayName }]
+    message     = '',
+    shareUrl    = '',
+    reportTitle = 'Issue History Report',
+    targetIssueKey = '',   // optional: caller can supply a specific issue to comment on
+  } = req.payload || {};
+
+  if (!recipients.length) return { success: false, error: 'No recipients provided' };
+
+  // Build the ADF comment
+  const contentNodes = [];
+
+  contentNodes.push({
+    type: 'paragraph',
+    content: [
+      { type: 'text', text: '\uD83D\uDCCA ' },
+      { type: 'text', text: reportTitle, marks: [{ type: 'strong' }] },
+      { type: 'text', text: ' has been shared with you.' },
+    ],
+  });
+
+  if (message.trim()) {
+    contentNodes.push({
+      type: 'paragraph',
+      content: [{ type: 'text', text: message.trim() }],
+    });
+  }
+
+  if (shareUrl) {
+    contentNodes.push({
+      type: 'paragraph',
+      content: [
+        { type: 'text', text: 'View report: ' },
+        { type: 'text', text: shareUrl, marks: [{ type: 'link', attrs: { href: shareUrl } }] },
+      ],
+    });
+  }
+
+  // @mention every recipient so Jira emails them
+  const mentionContent = [];
+  recipients.forEach((r, idx) => {
+    if (idx > 0) mentionContent.push({ type: 'text', text: ' ' });
+    mentionContent.push({
+      type: 'mention',
+      attrs: { id: r.accountId, text: `@${r.displayName}`, accessLevel: 'APPLICATION' },
+    });
+  });
+  contentNodes.push({ type: 'paragraph', content: mentionContent });
+
+  const commentBody = { type: 'doc', version: 1, content: contentNodes };
+
+  // Resolve which issue to post the comment on:
+  // 1. Caller-supplied targetIssueKey
+  // 2. Fall back: find any issue the current user can comment on by searching recent issues
+  let issueKey = targetIssueKey;
+  if (!issueKey) {
+    try {
+      const searchResp = await api.asUser().requestJira(
+        route`/rest/api/3/search/jql?jql=updated >= -7d ORDER BY updated DESC&fields=summary&maxResults=1`
+      );
+      const searchData = await searchResp.json();
+      issueKey = searchData.issues?.[0]?.key || '';
+    } catch (_) {}
+  }
+
+  if (!issueKey) {
+    return { success: false, error: 'Could not find an issue to post the share notification on. Please use "Share in Jira work item" instead.' };
+  }
+
+  try {
+    const resp = await api.asUser().requestJira(
+      route`/rest/api/3/issue/${issueKey}/comment`,
+      {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ body: commentBody }),
+      }
+    );
+    if (resp.status === 201 || resp.status === 200) {
+      return { success: true, issueKey };
+    }
+    const data = await resp.json();
+    return { success: false, error: JSON.stringify(data.errors || data.errorMessages || data) };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
 export const handler = resolver.getDefinitions();
 export { issueCreated, issueUpdated, issueDeleted };
 

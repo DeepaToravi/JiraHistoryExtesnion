@@ -1666,6 +1666,355 @@ function GlColHeaderFilter({ label, opts, val, onChange }) {
   );
 }
 
+// ── Share Panel (Global Page) ─────────────────────────────────────────────
+function SharePanel({ shareUrl, onClose, issueOptions = [] }) {
+  const [tab, setTab] = React.useState("email");
+
+  // ── Shared state ─────────────────────────────────────────────────────────
+  const [shareStatus, setShareStatus] = React.useState(null); // null|"sending"|"success"|"error"
+  const [shareError,  setShareError]  = React.useState("");
+  const [linkCopied,  setLinkCopied]  = React.useState(false);
+  const searchTimer = React.useRef(null);
+
+  // ── Email tab state ───────────────────────────────────────────────────────
+  const [emailRecipients,  setEmailRecipients]  = React.useState([]);
+  const [emailSearch,      setEmailSearch]      = React.useState("");
+  const [emailSuggestions, setEmailSuggestions] = React.useState([]);
+  const [emailSugLoading,  setEmailSugLoading]  = React.useState(false);
+  const [showEmailSug,     setShowEmailSug]     = React.useState(false);
+  const [emailMessage,     setEmailMessage]     = React.useState("");
+  // email tab also has a work-item picker (determines which issue carries the notification)
+  const [emailWiDropOpen,  setEmailWiDropOpen]  = React.useState(false);
+  const [emailWiSearch,    setEmailWiSearch]    = React.useState("");
+  const [emailTargetIssue, setEmailTargetIssue] = React.useState(null);
+  const emailWiRef = React.useRef(null);
+
+  React.useEffect(() => {
+    const h = e => { if (emailWiRef.current && !emailWiRef.current.contains(e.target)) setEmailWiDropOpen(false); };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
+
+  // ── Work-item tab state ───────────────────────────────────────────────────
+  const [showWiDropdown, setShowWiDropdown] = React.useState(false);
+  const [wiDropSearch,   setWiDropSearch]   = React.useState("");
+  const [selectedIssue,  setSelectedIssue]  = React.useState(null);
+  const wiDropRef = React.useRef(null);
+
+  React.useEffect(() => {
+    const h = e => { if (wiDropRef.current && !wiDropRef.current.contains(e.target)) setShowWiDropdown(false); };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
+
+  const [mentions,           setMentions]           = React.useState([]);
+  const [mentionSearch,      setMentionSearch]      = React.useState("");
+  const [mentionSuggestions, setMentionSuggestions] = React.useState([]);
+  const [mentionSugLoading,  setMentionSugLoading]  = React.useState(false);
+  const [showMentionSug,     setShowMentionSug]     = React.useState(false);
+  const [wiMessage,          setWiMessage]          = React.useState("");
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  function debounceSearch(fn, q) {
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => fn(q), 300);
+  }
+
+  function fetchUserSug(q, setSug, setLoading, setShow) {
+    if (!q.trim()) { setSug([]); setShow(false); return; }
+    debounceSearch(query => {
+      setLoading(true);
+      invoke("searchJiraUsers", { query })
+        .then(r => { setSug(r.users || []); setLoading(false); setShow(true); })
+        .catch(() => setLoading(false));
+    }, q);
+  }
+
+  function copyLink() {
+    const url = shareUrl || window.location.href;
+    navigator.clipboard.writeText(url).catch(() => {});
+    setLinkCopied(true);
+    setTimeout(() => setLinkCopied(false), 2000);
+  }
+
+  // ── Issue dropdown renderer (reused for both tabs) ────────────────────────
+  function renderIssueDropdown({ dropRef, open, setOpen, dropSearch, setDropSearch, selected, setSelected }) {
+    return (
+      <div className="sp-wi-wrap" ref={dropRef}>
+        <button className="sp-wi-btn" onClick={() => { setDropSearch(""); setOpen(v => !v); }}>
+          <span className="sp-wi-btn-text">
+            {selected
+              ? <><strong>{selected.key}</strong>
+                  {selected.summary ? ` \u2014 ${selected.summary.slice(0,40)}${selected.summary.length > 40 ? "\u2026" : ""}` : ""}
+                </>
+              : "Select work item"}
+          </span>
+          <span className="sp-wi-arrow">&#9660;</span>
+        </button>
+        {open && (
+          <div className="sp-wi-dropdown">
+            {issueOptions.length > 6 && (
+              <div className="sp-wi-search-row">
+                <input className="sp-wi-search" placeholder="Find work item\u2026" autoFocus
+                  value={dropSearch} onChange={e => setDropSearch(e.target.value)} />
+              </div>
+            )}
+            <ul className="sp-wi-list">
+              {issueOptions
+                .filter(i => !dropSearch.trim() ||
+                  i.key.toLowerCase().includes(dropSearch.toLowerCase()) ||
+                  (i.summary || "").toLowerCase().includes(dropSearch.toLowerCase()))
+                .map(i => (
+                  <li key={i.key}
+                    className={`sp-wi-item${selected?.key === i.key ? " sp-wi-active" : ""}`}
+                    onClick={() => { setSelected(i); setOpen(false); setDropSearch(""); }}>
+                    <span className={`sp-wi-cb${selected?.key === i.key ? " on" : ""}`}>
+                      {selected?.key === i.key ? "\u2714" : ""}
+                    </span>
+                    <span className="sp-wi-key">{i.key}</span>
+                    {i.summary && <span className="sp-wi-sum">{i.summary}</span>}
+                  </li>
+                ))}
+              {issueOptions.length === 0 && (
+                <li className="sp-wi-empty">No work items loaded yet</li>
+              )}
+            </ul>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── Email share handler — posts @mention comment → Jira emails recipients ─
+  async function handleShareViaEmail() {
+    if (!emailRecipients.length || shareStatus === "sending") return;
+    setShareStatus("sending");
+    try {
+      const res = await invoke("shareViaEmailComment", {
+        recipients:     emailRecipients,
+        message:        emailMessage,
+        shareUrl,
+        reportTitle:    "Issue History Global Report",
+        targetIssueKey: emailTargetIssue?.key || "",
+      });
+      if (res.success) {
+        setShareStatus("success");
+        setTimeout(() => setShareStatus(null), 2500);
+      } else {
+        setShareStatus("error");
+        setShareError(res.error || "Failed to share");
+        setTimeout(() => { setShareStatus(null); setShareError(""); }, 4000);
+      }
+    } catch (e) {
+      setShareStatus("error");
+      setShareError(e.message || "Failed to share");
+      setTimeout(() => { setShareStatus(null); setShareError(""); }, 4000);
+    }
+  }
+
+  // ── Work-item share handler ───────────────────────────────────────────────
+  async function handleShareToWorkItem() {
+    if (!selectedIssue || shareStatus === "sending") return;
+    setShareStatus("sending");
+    try {
+      const res = await invoke("shareToJiraIssue", {
+        targetIssueKey: selectedIssue.key,
+        mentions,
+        message:     wiMessage,
+        shareUrl,
+        reportTitle: "Issue History Global Report",
+      });
+      if (res.success) {
+        setShareStatus("success");
+        setTimeout(() => setShareStatus(null), 2500);
+      } else {
+        setShareStatus("error");
+        setShareError(res.error || "Failed to share");
+        setTimeout(() => { setShareStatus(null); setShareError(""); }, 4000);
+      }
+    } catch (e) {
+      setShareStatus("error");
+      setShareError(e.message || "Failed to share");
+      setTimeout(() => { setShareStatus(null); setShareError(""); }, 4000);
+    }
+  }
+
+  const canShareEmail = emailRecipients.length > 0 && shareStatus !== "sending";
+  const canShareWi    = !!selectedIssue && shareStatus !== "sending";
+
+  return (
+    <div className="sp-panel">
+      {/* Header: tabs + close */}
+      <div className="sp-header">
+        <div className="sp-tabs">
+          <button className={`sp-tab${tab === "email" ? " sp-tab-on" : ""}`}
+            onClick={() => { setTab("email"); setShareStatus(null); setShareError(""); }}>
+            Share via email
+          </button>
+          <button className={`sp-tab${tab === "workitem" ? " sp-tab-on" : ""}`}
+            onClick={() => { setTab("workitem"); setShareStatus(null); setShareError(""); }}>
+            Share in Jira work item
+          </button>
+        </div>
+        <button className="sp-close" onClick={onClose} title="Close">&#10005;</button>
+      </div>
+
+      <div className="sp-body">
+        <p className="sp-required-note">Required fields are marked with an asterisk*</p>
+
+        {/* ── Email tab ── */}
+        {tab === "email" && (<>
+          {/* Recipients */}
+          <div className="sp-field">
+            <label className="sp-label">Recipients*</label>
+            <div className="sp-chips-input"
+              onClick={e => e.currentTarget.querySelector(".sp-chip-inp")?.focus()}>
+              {emailRecipients.map(r => (
+                <span key={r.accountId} className="sp-chip">
+                  {r.displayName}
+                  <button className="sp-chip-rm"
+                    onClick={() => setEmailRecipients(prev => prev.filter(x => x.accountId !== r.accountId))}>
+                    &#10005;
+                  </button>
+                </span>
+              ))}
+              <input className="sp-chip-inp"
+                placeholder={emailRecipients.length === 0 ? "Search for a user\u2026" : ""}
+                value={emailSearch}
+                onChange={e => {
+                  setEmailSearch(e.target.value);
+                  fetchUserSug(e.target.value, setEmailSuggestions, setEmailSugLoading, setShowEmailSug);
+                }}
+                onFocus={() => { if (emailSuggestions.length) setShowEmailSug(true); }}
+                onBlur={() => setTimeout(() => setShowEmailSug(false), 150)}
+              />
+            </div>
+            {showEmailSug && (emailSuggestions.length > 0 || emailSugLoading) && (
+              <ul className="sp-suggestions">
+                {emailSugLoading && <li className="sp-sug-loading">Searching\u2026</li>}
+                {emailSuggestions
+                  .filter(u => !emailRecipients.find(r => r.accountId === u.accountId))
+                  .map(u => (
+                    <li key={u.accountId} onMouseDown={e => e.preventDefault()}
+                      onClick={() => {
+                        setEmailRecipients(prev => [...prev, u]);
+                        setEmailSearch(""); setEmailSuggestions([]); setShowEmailSug(false);
+                      }}>{u.displayName}</li>
+                  ))}
+              </ul>
+            )}
+            <p className="sp-hint">Recipients will receive a Jira notification email via @mention</p>
+          </div>
+
+          {/* Work item to post notification on */}
+          <div className="sp-field">
+            <label className="sp-label">Work item for notification (optional)</label>
+            {renderIssueDropdown({
+              dropRef: emailWiRef, open: emailWiDropOpen, setOpen: setEmailWiDropOpen,
+              dropSearch: emailWiSearch, setDropSearch: setEmailWiSearch,
+              selected: emailTargetIssue, setSelected: setEmailTargetIssue,
+            })}
+            <p className="sp-hint">The notification comment will be posted on this work item. If left blank, the most recent issue in your history is used.</p>
+          </div>
+
+          {/* Message */}
+          <div className="sp-field">
+            <label className="sp-label">Message (optional)</label>
+            <textarea className="sp-textarea" rows={3} placeholder="Enter your message"
+              value={emailMessage} onChange={e => setEmailMessage(e.target.value)} />
+          </div>
+
+          <div className="sp-actions">
+            <button className="sp-copy-btn" onClick={copyLink}>
+              &#128279; {linkCopied ? "Copied!" : "Copy link"}
+            </button>
+            <button className="prim-btn" onClick={handleShareViaEmail} disabled={!canShareEmail}>
+              {shareStatus === "sending" ? "Sharing\u2026"
+                : shareStatus === "success" ? "\u2713 Shared!"
+                : "Share"}
+            </button>
+          </div>
+          {shareStatus === "error" && shareError && <p className="sp-error">{shareError}</p>}
+        </>)}
+
+        {/* ── Work-item tab ── */}
+        {tab === "workitem" && (<>
+          {/* Work item dropdown */}
+          <div className="sp-field">
+            <label className="sp-label">Work item*</label>
+            {renderIssueDropdown({
+              dropRef: wiDropRef, open: showWiDropdown, setOpen: setShowWiDropdown,
+              dropSearch: wiDropSearch, setDropSearch: setWiDropSearch,
+              selected: selectedIssue, setSelected: setSelectedIssue,
+            })}
+          </div>
+
+          {/* Mentions */}
+          <div className="sp-field">
+            <label className="sp-label">Mentions</label>
+            <div className="sp-chips-input"
+              onClick={e => e.currentTarget.querySelector(".sp-chip-inp")?.focus()}>
+              {mentions.map(m => (
+                <span key={m.accountId} className="sp-chip">
+                  {m.displayName}
+                  <button className="sp-chip-rm"
+                    onClick={() => setMentions(prev => prev.filter(x => x.accountId !== m.accountId))}>
+                    &#10005;
+                  </button>
+                </span>
+              ))}
+              <input className="sp-chip-inp"
+                placeholder={mentions.length === 0 ? "Search for a user\u2026" : ""}
+                value={mentionSearch}
+                onChange={e => {
+                  setMentionSearch(e.target.value);
+                  fetchUserSug(e.target.value, setMentionSuggestions, setMentionSugLoading, setShowMentionSug);
+                }}
+                onFocus={() => { if (mentionSuggestions.length) setShowMentionSug(true); }}
+                onBlur={() => setTimeout(() => setShowMentionSug(false), 150)}
+              />
+            </div>
+            {showMentionSug && (mentionSuggestions.length > 0 || mentionSugLoading) && (
+              <ul className="sp-suggestions">
+                {mentionSugLoading && <li className="sp-sug-loading">Searching\u2026</li>}
+                {mentionSuggestions
+                  .filter(u => !mentions.find(m => m.accountId === u.accountId))
+                  .map(u => (
+                    <li key={u.accountId} onMouseDown={e => e.preventDefault()}
+                      onClick={() => {
+                        setMentions(prev => [...prev, u]);
+                        setMentionSearch(""); setMentionSuggestions([]); setShowMentionSug(false);
+                      }}>{u.displayName}</li>
+                  ))}
+              </ul>
+            )}
+            <p className="sp-hint">Mentioned users will receive a link to the report in a comment</p>
+          </div>
+
+          {/* Message */}
+          <div className="sp-field">
+            <label className="sp-label">Message (optional)</label>
+            <textarea className="sp-textarea" rows={3} placeholder="Enter your message"
+              value={wiMessage} onChange={e => setWiMessage(e.target.value)} />
+          </div>
+
+          <div className="sp-actions">
+            <button className="sp-copy-btn" onClick={copyLink}>
+              &#128279; {linkCopied ? "Copied!" : "Copy link"}
+            </button>
+            <button className="prim-btn" onClick={handleShareToWorkItem} disabled={!canShareWi}>
+              {shareStatus === "sending" ? "Sharing\u2026"
+                : shareStatus === "success" ? "\u2713 Shared!"
+                : "Share"}
+            </button>
+          </div>
+          {shareStatus === "error" && shareError && <p className="sp-error">{shareError}</p>}
+        </>)}
+      </div>
+    </div>
+  );
+}
+
 // Full-page cross-project history — exact marketplace feature parity.
 function GlobalPageApp() {
   const [history,    setHistory]    = React.useState([]);
@@ -1728,6 +2077,23 @@ function GlobalPageApp() {
 
   const [glView, setGlView] = React.useState("activity"); // "activity" | "permissions"
 
+  // ── Share panel state ───────────────────────────────────────────────────────
+  const [showSharePanel, setShowSharePanel] = React.useState(false);
+  const [shareUrl,       setShareUrl]       = React.useState("");
+  const shareRef = React.useRef(null);
+
+  // Resolve the share URL once on mount
+  React.useEffect(() => {
+    const ref = document.referrer;
+    if (ref && (ref.includes("atlassian.net") || ref.includes("atlassian.com"))) {
+      setShareUrl(ref);
+    } else {
+      invoke("getSiteBaseUrl")
+        .then(r => { if (r.baseUrl) setShareUrl(r.baseUrl); })
+        .catch(() => {});
+    }
+  }, []);
+
   const exportRef    = React.useRef(null);
   const colPickerRef = React.useRef(null);
   const modeMenuRef  = React.useRef(null);
@@ -1744,6 +2110,7 @@ function GlobalPageApp() {
       [projMenuRef,  () => setShowProjMenu(false)],
       [userMenuRef,  () => { setShowUserMenu(false); setUserSearch(""); }],
       [secMenuRef,   () => setShowSecMenu(false)],
+      [shareRef,     () => setShowSharePanel(false)],
     ];
     const h = e => handlers.forEach(([ref, fn]) => { if (ref.current && !ref.current.contains(e.target)) fn(); });
     document.addEventListener("mousedown", h);
@@ -1908,6 +2275,16 @@ function GlobalPageApp() {
   const uniqueUsers = React.useMemo(() => {
     const s = new Set(history.map(r => r.author).filter(Boolean));
     return Array.from(s).sort();
+  }, [history]);
+
+  const uniqueIssues = React.useMemo(() => {
+    const map = {};
+    history.forEach(r => {
+      if (r.issueKey && !map[r.issueKey]) map[r.issueKey] = r.summary || "";
+    });
+    return Object.entries(map)
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([key, summary]) => ({ key, summary }));
   }, [history]);
 
   const priorityOpts = React.useMemo(() => {
@@ -2433,6 +2810,21 @@ function GlobalPageApp() {
                   })}
                 </ul>
               </div>
+            )}
+          </div>
+
+          {/* Share */}
+          <div className="sp-wrap" ref={shareRef}>
+            <button className="icon-btn" title="Share"
+              onClick={() => setShowSharePanel(v => !v)}>
+              &#8679; Share
+            </button>
+            {showSharePanel && (
+              <SharePanel
+                shareUrl={shareUrl}
+                issueOptions={uniqueIssues}
+                onClose={() => setShowSharePanel(false)}
+              />
             )}
           </div>
         </div>

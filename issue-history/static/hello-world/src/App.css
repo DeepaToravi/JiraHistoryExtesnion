@@ -621,3 +621,136 @@
 .sev-dots           { display:inline-flex; align-items:center; gap:3px; }
 .sev-dot            { width:10px; height:10px; border-radius:50%; display:inline-block; }
 .sev-dot-label      { font-size:11px; font-weight:600; margin-left:4px; }
+
+/* ── Share Panel ──────────────────────────────────────────────────────────── */
+/* Wrapper sits on the right toolbar; panel opens below it */
+.sp-wrap            { position:relative; }
+
+.sp-panel           { position:absolute; top:calc(100% + 6px); right:0; width:400px;
+                      background:#fff; border:1px solid #DFE1E6; border-radius:4px;
+                      box-shadow:0 8px 24px rgba(9,30,66,.2); z-index:1000;
+                      font-size:13px; color:#172B4D; }
+
+/* Header row: tabs + close */
+.sp-header          { display:flex; align-items:center; justify-content:space-between;
+                      padding:0 12px; border-bottom:1px solid #DFE1E6; }
+.sp-tabs            { display:flex; gap:0; flex:1; }
+.sp-tab             { background:none; border:none; border-bottom:2px solid transparent;
+                      margin-bottom:-1px; padding:10px 12px; font-size:13px; color:#42526E;
+                      cursor:pointer; white-space:nowrap; outline:none; }
+.sp-tab:hover       { color:#0052CC; background:#F4F5F7; }
+.sp-tab.sp-tab-on   { color:#0052CC; border-bottom:2px solid #0052CC; font-weight:600; }
+.sp-close           { background:none; border:none; cursor:pointer; font-size:14px;
+                      color:#6B778C; padding:4px 6px; border-radius:3px; line-height:1;
+                      flex-shrink:0; }
+.sp-close:hover     { background:#F4F5F7; color:#172B4D; }
+
+/* Body */
+.sp-body            { padding:14px 16px 16px; }
+.sp-required-note   { font-size:11px; color:#6B778C; margin-bottom:12px; }
+
+/* Field */
+.sp-field           { margin-bottom:12px; position:relative; }
+.sp-label           { display:block; font-size:12px; font-weight:600; color:#172B4D; margin-bottom:4px; }
+.sp-hint            { font-size:11px; color:#6B778C; margin-top:4px; line-height:1.4; }
+
+/* Multi-value chips input */
+.sp-chips-input     { display:flex; flex-wrap:wrap; align-items:center; gap:4px;
+                      border:1px solid #DFE1E6; border-radius:3px; padding:4px 8px;
+                      min-height:36px; background:#fff; cursor:text; }
+.sp-chips-input:focus-within { border-color:#0052CC; box-shadow:0 0 0 2px rgba(0,82,204,.2); }
+.sp-chip            { display:inline-flex; align-items:center; gap:4px;
+                      background:#DEEBFF; color:#0052CC; border-radius:3px;
+                      padding:2px 6px; font-size:12px; }
+.sp-chip-rm         { background:none; border:none; cursor:pointer; color:#0052CC;
+                      font-size:10px; padding:0; line-height:1; }
+.sp-chip-rm:hover   { color:#0747A6; }
+.sp-chip-inp        { border:none; outline:none; font-size:13px; flex:1;
+                      min-width:80px; background:transparent; color:#172B4D; }
+
+/* Issue key input */
+.sp-issue-inp       { width:100%; border:1px solid #DFE1E6; border-radius:3px;
+                      padding:6px 10px; font-size:13px; outline:none; color:#172B4D; }
+.sp-issue-inp:focus { border-color:#0052CC; box-shadow:0 0 0 2px rgba(0,82,204,.2); }
+.sp-inp-loading     { position:absolute; right:10px; top:50%; transform:translateY(-50%);
+                      font-size:14px; color:#6B778C; pointer-events:none; }
+
+/* Suggestion dropdown */
+.sp-suggestions     { position:absolute; top:100%; left:0; right:0; margin-top:2px;
+                      background:#fff; border:1px solid #DFE1E6; border-radius:3px;
+                      box-shadow:0 4px 12px rgba(9,30,66,.15); z-index:1100;
+                      list-style:none; padding:4px 0; max-height:200px; overflow-y:auto; }
+.sp-suggestions li  { padding:7px 12px; font-size:13px; cursor:pointer; color:#172B4D; }
+.sp-suggestions li:hover { background:#F4F5F7; }
+.sp-sug-loading     { color:#6B778C; font-style:italic; cursor:default !important; }
+.sp-sug-loading:hover { background:transparent !important; }
+
+/* Textarea */
+.sp-textarea        { width:100%; border:1px solid #DFE1E6; border-radius:3px;
+                      padding:6px 10px; font-size:13px; resize:vertical;
+                      color:#172B4D; outline:none; font-family:inherit; }
+.sp-textarea:focus  { border-color:#0052CC; box-shadow:0 0 0 2px rgba(0,82,204,.2); }
+
+/* Bottom action row */
+.sp-actions         { display:flex; align-items:center; justify-content:flex-end;
+                      gap:8px; margin-top:14px; }
+.sp-copy-btn        { background:#FAFBFC; border:1px solid #DFE1E6; border-radius:3px;
+                      padding:6px 12px; font-size:13px; cursor:pointer; color:#42526E;
+                      white-space:nowrap; }
+.sp-copy-btn:hover  { background:#F4F5F7; border-color:#B3BAC5; }
+
+/* Error message inside share panel */
+.sp-error           { color:#BF2600; font-size:12px; margin-top:8px; }
+
+/* ── Work-item dropdown (Share panel) ──────────────────────────────────────── */
+.sp-wi-wrap         { position:relative; }
+
+/* dropdown trigger button — matches marketplace "Select work item" style */
+.sp-wi-btn          { display:flex; align-items:center; justify-content:space-between; gap:8px;
+                      width:100%; border:1px solid #DFE1E6; border-radius:3px;
+                      padding:6px 10px; background:#fff; font-size:13px;
+                      color:#172B4D; cursor:pointer; text-align:left; }
+.sp-wi-btn:hover    { border-color:#B3BAC5; background:#FAFBFC; }
+.sp-wi-btn:focus    { outline:none; border-color:#0052CC; box-shadow:0 0 0 2px rgba(0,82,204,.2); }
+.sp-wi-btn-text     { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+                      color:#6B778C; }
+.sp-wi-btn-text strong { color:#172B4D; }
+.sp-wi-arrow        { color:#5E6C84; font-size:10px; flex-shrink:0; }
+
+/* dropdown panel */
+.sp-wi-dropdown     { position:absolute; top:calc(100% + 3px); left:0; right:0;
+                      background:#fff; border:1px solid #DFE1E6; border-radius:3px;
+                      box-shadow:0 4px 14px rgba(9,30,66,.18); z-index:1200; }
+
+/* search row inside dropdown */
+.sp-wi-search-row   { padding:6px 10px; border-bottom:1px solid #F4F5F7; }
+.sp-wi-search       { width:100%; border:1px solid #DFE1E6; border-radius:3px;
+                      padding:5px 8px; font-size:13px; outline:none; color:#172B4D;
+                      background:#FAFBFC; }
+.sp-wi-search:focus { border-color:#0052CC; box-shadow:0 0 0 2px rgba(0,82,204,.2); }
+
+/* list */
+.sp-wi-list         { list-style:none; max-height:220px; overflow-y:auto;
+                      padding:4px 0; margin:0; }
+
+/* each issue row */
+.sp-wi-item         { display:flex; align-items:center; gap:8px; padding:7px 12px;
+                      cursor:pointer; font-size:13px; color:#172B4D; }
+.sp-wi-item:hover   { background:#F4F5F7; }
+.sp-wi-item.sp-wi-active { background:#DEEBFF; }
+
+/* checkbox indicator */
+.sp-wi-cb           { display:inline-flex; align-items:center; justify-content:center;
+                      width:16px; height:16px; border:2px solid #B3BAC5; border-radius:2px;
+                      font-size:10px; flex-shrink:0; background:#fff; color:#0052CC; }
+.sp-wi-cb.on        { border-color:#0052CC; background:#0052CC; color:#fff; }
+
+/* key badge */
+.sp-wi-key          { font-weight:600; color:#172B4D; white-space:nowrap; flex-shrink:0; }
+
+/* summary text — truncated */
+.sp-wi-sum          { color:#5E6C84; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+/* empty message */
+.sp-wi-empty        { padding:10px 14px; font-size:12px; color:#6B778C;
+                      font-style:italic; cursor:default; }
