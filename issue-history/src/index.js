@@ -400,54 +400,137 @@ resolver.define('fetchGadgetHistory', async (req) => {
     jql = `updated >= "${sinceStr}" ORDER BY updated DESC`;
   }
 
+  // ── Fetch all Jira field metadata so we can label every field ────────────
+  // Core field IDs that are handled as explicit first-class columns and
+  // should NOT appear in the dynamic extraFields section.
+  const CORE_IDS = new Set([
+    'summary', 'issuetype', 'priority', 'status', 'assignee', 'reporter',
+    'labels', 'components', 'fixVersions', 'resolution', 'customfield_10020',
+    'project', 'creator', 'created', 'updated', 'comment', 'attachment',
+    'worklog', 'issuelinks', 'subtasks', 'parent', 'watches', 'votes',
+    'changelog', 'renderedFields', 'names', 'schema', 'operations',
+    'versionedRepresentations', 'editmeta', 'transitions',
+  ]);
+
+  let extraFieldMeta = [];
+  try {
+    const fResp = await api.asUser().requestJira(route`/rest/api/3/field`);
+    const fData = await fResp.json();
+    extraFieldMeta = (Array.isArray(fData) ? fData : [])
+      .filter(f => f.id && f.name && !CORE_IDS.has(f.id))
+      .map(f => ({ id: f.id, name: f.name, custom: !!f.custom }))
+      .sort((a, b) => {
+        // system fields before custom fields, then alphabetical
+        if (a.custom !== b.custom) return a.custom ? 1 : -1;
+        return a.name.localeCompare(b.name);
+      });
+  } catch (e) {
+    console.error('fetchGadgetHistory: could not fetch field metadata', e.message);
+  }
+
+  // ── Helper: coerce any Jira field value to a readable string ─────────────
+  function extractValue(val) {
+    if (val === null || val === undefined) return '';
+    if (typeof val === 'string')  return val;
+    if (typeof val === 'number' || typeof val === 'boolean') return String(val);
+    if (Array.isArray(val)) {
+      if (val.length === 0) return '';
+      return val.map(v => {
+        if (typeof v === 'string') return v;
+        if (v && typeof v === 'object')
+          return v.displayName || v.name || v.value || v.key || '';
+        return String(v);
+      }).filter(Boolean).join(', ');
+    }
+    if (typeof val === 'object') {
+      // ADF rich-text: recurse into content nodes
+      if (val.type === 'doc' && Array.isArray(val.content)) {
+        const texts = [];
+        function walk(node) {
+          if (node.type === 'text' && node.text) texts.push(node.text);
+          (node.content || []).forEach(walk);
+        }
+        val.content.forEach(walk);
+        return texts.join(' ');
+      }
+      return val.displayName || val.name || val.value || val.key || val.accountId || '';
+    }
+    return String(val);
+  }
+
   const history  = [];
   const projsSet = new Set();
 
   try {
+    // Use *navigable to fetch every available field in one request
     const resp = await api.asUser().requestJira(
-      route`/rest/api/3/search/jql?jql=${jql}&fields=summary,project,issuetype,priority,status&expand=changelog&maxResults=100`
+      route`/rest/api/3/search/jql?jql=${jql}&fields=*navigable&expand=changelog&maxResults=100`
     );
     const data = await resp.json();
     (data.issues || []).forEach(issue => {
       const proj = issue.fields?.project?.key || issue.key?.split('-')[0] || '';
       if (proj) projsSet.add(proj);
+
+      // Resolve sprint from customfield_10020 (Jira Cloud sprint)
+      const sprintArr = issue.fields?.customfield_10020 || [];
+      const sprintName = (sprintArr.find(s => s.state === 'active') || sprintArr[sprintArr.length - 1])?.name || '';
+
+      // Build extraFields map using the discovered field metadata
+      const extraFields = {};
+      extraFieldMeta.forEach(f => {
+        const raw = issue.fields?.[f.id];
+        if (raw !== null && raw !== undefined) {
+          const v = extractValue(raw);
+          if (v) extraFields[f.id] = v;
+        }
+      });
+
       (issue.changelog?.histories || []).forEach(h => {
         if (new Date(h.created).getTime() < sinceMs) return;
-        const author    = h.author?.displayName || '';
-        const authorId  = h.author?.accountId   || '';
+        const author   = h.author?.displayName || '';
+        const authorId = h.author?.accountId   || '';
         if (!author || author.toLowerCase() === 'system') return;
         if (currentUserOnly && currentUser && authorId !== currentUser.accountId) return;
         (h.items || []).forEach(it => {
           const fromVal = (it.fromString !== undefined && it.fromString !== null) ? it.fromString : (it.from || '');
           const toVal   = (typeof it['toString'] === 'string') ? it['toString'] : (it.to || '');
           history.push({
-            timestamp: h.created,
+            timestamp:   h.created,
             author,
             authorId,
-            issueKey:  issue.key,
-            summary:   issue.fields?.summary          || '',
-            issueType: issue.fields?.issuetype?.name  || '',
-            priority:  issue.fields?.priority?.name   || '',
-            status:    issue.fields?.status?.name     || '',
-            projectKey: proj,
-            field:     it.field || '',
-            from:      fromVal,
-            to:        toVal,
+            issueKey:    issue.key,
+            summary:     issue.fields?.summary                       || '',
+            issueType:   issue.fields?.issuetype?.name               || '',
+            priority:    issue.fields?.priority?.name                || '',
+            status:      issue.fields?.status?.name                  || '',
+            projectKey:  proj,
+            assignee:    issue.fields?.assignee?.displayName         || '',
+            reporter:    issue.fields?.reporter?.displayName         || '',
+            labels:      (issue.fields?.labels     || []).join(', '),
+            components:  (issue.fields?.components || []).map(c => c.name).join(', '),
+            fixVersions: (issue.fields?.fixVersions|| []).map(v => v.name).join(', '),
+            resolution:  issue.fields?.resolution?.name              || '',
+            sprint:      sprintName,
+            field:       it.field || '',
+            from:        fromVal,
+            to:          toVal,
+            extraFields,
           });
         });
       });
     });
   } catch (e) {
     console.error('fetchGadgetHistory error:', e.message);
-    return { history: [], total: 0, currentUser, projects: [], error: e.message };
+    return { history: [], total: 0, currentUser, projects: [], fieldMeta: [], error: e.message };
   }
 
   history.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
   return {
     history,
-    total:       history.length,
+    total:     history.length,
     currentUser,
-    projects:    Array.from(projsSet).sort(),
+    projects:  Array.from(projsSet).sort(),
+    fieldMeta: extraFieldMeta,
   };
 });
 

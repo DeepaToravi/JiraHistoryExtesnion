@@ -2015,6 +2015,90 @@ function SharePanel({ shareUrl, onClose, issueOptions = [] }) {
   );
 }
 
+/* ─── ColPickerPanel ─────────────────────────────────────────────────────
+   Renders the Columns dropdown panel.
+   - Base columns are always listed (the 17 fixed ones).
+   - Extra columns come from `fieldMeta` returned by the backend (dynamic).
+   - A search box filters both sections simultaneously.
+   - At least one column must remain visible.
+──────────────────────────────────────────────────────────────────────── */
+const BASE_COL_DEFS = [
+  { k:"date",        l:"Date of change" },
+  { k:"updater",     l:"Updated by"     },
+  { k:"key",         l:"Key"            },
+  { k:"issuetype",   l:"Issue Type"     },
+  { k:"summary",     l:"Summary"        },
+  { k:"priority",    l:"Priority"       },
+  { k:"status",      l:"Status"         },
+  { k:"assignee",    l:"Assignee"       },
+  { k:"reporter",    l:"Reporter"       },
+  { k:"sprint",      l:"Sprint"         },
+  { k:"labels",      l:"Labels"         },
+  { k:"components",  l:"Components"     },
+  { k:"fixversions", l:"Fix Version"    },
+  { k:"resolution",  l:"Resolution"     },
+  { k:"project",     l:"Project"        },
+  { k:"field",       l:"Field"          },
+  { k:"changes",     l:"Changes"        },
+];
+
+function ColPickerPanel({ visibleCols, setVisibleCols, fieldMeta }) {
+  const [colSearch, setColSearch] = React.useState("");
+  const q = colSearch.trim().toLowerCase();
+
+  const toggle = React.useCallback((k) => {
+    setVisibleCols(prev => {
+      const next = new Set(prev);
+      if (next.has(k)) { if (next.size > 1) next.delete(k); }
+      else next.add(k);
+      return next;
+    });
+  }, [setVisibleCols]);
+
+  // Build one flat unified list: base cols + dynamic Jira fields
+  const allItems = React.useMemo(() => {
+    const base  = BASE_COL_DEFS.map(c => ({ k: c.k, label: c.l, custom: false }));
+    const extra = (fieldMeta || []).map(f => ({ k: f.id, label: f.name, custom: f.custom }));
+    // Deduplicate: skip extra entries whose id already exists in base keys
+    const baseKeys = new Set(BASE_COL_DEFS.map(c => c.k));
+    const deduped  = extra.filter(f => !baseKeys.has(f.k));
+    return [...base, ...deduped];
+  }, [fieldMeta]);
+
+  const filtered = q
+    ? allItems.filter(c => c.label.toLowerCase().includes(q) || c.k.toLowerCase().includes(q))
+    : allItems;
+
+  return (
+    <div className="kf-panel kf-panel-lg" style={{ right:0, left:"auto" }}>
+      <div className="kf-search-row">
+        <input
+          className="kf-search-inp"
+          placeholder="Search fields…"
+          value={colSearch}
+          onChange={e => setColSearch(e.target.value)}
+          autoFocus
+        />
+      </div>
+      <ul className="kf-list">
+        {filtered.map(({ k, label, custom }) => {
+          const on = visibleCols.has(k);
+          return (
+            <li key={k} className={`kf-item${on ? " kf-checked" : ""}`} onClick={() => toggle(k)}>
+              <span className={`kf-cb${on ? " on" : ""}`}>{on ? "✔" : ""}</span>
+              <span className="kf-lbl">{label}</span>
+              {custom && <span className="kf-tag">custom</span>}
+            </li>
+          );
+        })}
+        {filtered.length === 0 && (
+          <li className="kf-no-match">No fields match</li>
+        )}
+      </ul>
+    </div>
+  );
+}
+
 // Full-page cross-project history — exact marketplace feature parity.
 function GlobalPageApp() {
   const [history,    setHistory]    = React.useState([]);
@@ -2066,6 +2150,7 @@ function GlobalPageApp() {
   const [collapsedKeys,   setCollapsedKeys]   = React.useState(new Set());
   const [visibleCols,     setVisibleCols]     = React.useState(new Set(["date","updater","key","issuetype","summary","priority","status","field","changes"]));
   const [showColPicker,   setShowColPicker]   = React.useState(false);
+  const [fieldMeta,       setFieldMeta]       = React.useState([]); // [{id, name, custom}] from backend
   const loadedAt      = React.useRef(null);
   const [lastUpdated, setLastUpdated] = React.useState("");
   const userSearchTimer = React.useRef(null);
@@ -2239,6 +2324,7 @@ function GlobalPageApp() {
       .then(res => {
         let hist = res.history || [];
         setProjects(res.projects || []);
+        setFieldMeta(res.fieldMeta || []);
         if (keepDeleted) {
           invoke("fetchDeletedIssues", { projectKey: "all" }).then(dr => {
             const del = (dr.issues || []).map(iss => ({
@@ -2325,12 +2411,21 @@ function GlobalPageApp() {
       map[r.issueKey].push(r);
     });
     return order.map(k => ({
-      issueKey:  k,
-      summary:   map[k][0]?.summary   || "",
-      issueType: map[k][0]?.issueType || "",
-      priority:  map[k][0]?.priority  || "",
-      status:    map[k][0]?.status    || "",
-      rows:      map[k],
+      issueKey:    k,
+      summary:     map[k][0]?.summary     || "",
+      issueType:   map[k][0]?.issueType   || "",
+      priority:    map[k][0]?.priority    || "",
+      status:      map[k][0]?.status      || "",
+      projectKey:  map[k][0]?.projectKey  || "",
+      assignee:    map[k][0]?.assignee    || "",
+      reporter:    map[k][0]?.reporter    || "",
+      labels:      map[k][0]?.labels      || "",
+      components:  map[k][0]?.components  || "",
+      fixVersions: map[k][0]?.fixVersions || "",
+      resolution:  map[k][0]?.resolution  || "",
+      sprint:      map[k][0]?.sprint      || "",
+      extraFields: map[k][0]?.extraFields || {},
+      rows:        map[k],
     }));
   }, [filteredRows]);
 
@@ -2782,34 +2877,11 @@ function GlobalPageApp() {
               &#9776; Columns
             </button>
             {showColPicker && (
-              <div className="kf-panel" style={{ right:0, left:"auto", width:190 }}>
-                <ul className="kf-list">
-                  {[
-                    { k:"date",      l:"Date of change" },
-                    { k:"updater",   l:"Updated by"     },
-                    { k:"key",       l:"Key"            },
-                    { k:"issuetype", l:"Issue Type"     },
-                    { k:"summary",   l:"Summary"        },
-                    { k:"priority",  l:"Priority"       },
-                    { k:"status",    l:"Status"         },
-                    { k:"field",     l:"Field"          },
-                    { k:"changes",   l:"Changes"        },
-                  ].map(({ k, l }) => {
-                    const on = visibleCols.has(k);
-                    return (
-                      <li key={k} className={`kf-item${on?" kf-checked":""}`}
-                        onClick={() => setVisibleCols(prev => {
-                          const next = new Set(prev);
-                          if (next.has(k)) { if (next.size > 1) next.delete(k); } else next.add(k);
-                          return next;
-                        })}>
-                        <span className={`kf-cb${on?" on":""}`}>{on?"✔":""}</span>
-                        <span className="kf-lbl">{l}</span>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
+              <ColPickerPanel
+                visibleCols={visibleCols}
+                setVisibleCols={setVisibleCols}
+                fieldMeta={fieldMeta}
+              />
             )}
           </div>
 
@@ -2917,15 +2989,24 @@ function GlobalPageApp() {
                   />
                 </th>
                 <th style={{ width:28 }}></th>
-                {visibleCols.has("date")      && <th><ColSortMenu colKey="date" label="Date of change" sortCol={sortCol} sortAsc={sortAsc} isDate onSort={(col, asc) => { setSortCol(col); setSortAsc(asc); setPage(1); }} /></th>}
-                {visibleCols.has("updater")   && <th><ColSortMenu colKey="updater" label="Updated by" sortCol={sortCol} sortAsc={sortAsc} onSort={(col, asc) => { setSortCol(col); setSortAsc(asc); setPage(1); }} /></th>}
-                {visibleCols.has("key")       && <th><ColSortMenu colKey="key" label="Key" sortCol={sortCol} sortAsc={sortAsc} onSort={(col, asc) => { setSortCol(col); setSortAsc(asc); setPage(1); }} /></th>}
-                {visibleCols.has("issuetype") && <th>Issue Type</th>}
-                {visibleCols.has("summary")   && <th><ColSortMenu colKey="summary" label="Summary" sortCol={sortCol} sortAsc={sortAsc} onSort={(col, asc) => { setSortCol(col); setSortAsc(asc); setPage(1); }} /></th>}
-                {visibleCols.has("priority")  && <th><ColSortMenu colKey="priority" label="Priority" sortCol={sortCol} sortAsc={sortAsc} onSort={(col, asc) => { setSortCol(col); setSortAsc(asc); setPage(1); }}><GlColHeaderFilter label="priority" opts={priorityOpts} val={priorityF} onChange={v => { setPriorityF(v); setPage(1); }} /></ColSortMenu></th>}
-                {visibleCols.has("status")    && <th><ColSortMenu colKey="status" label="Status" sortCol={sortCol} sortAsc={sortAsc} onSort={(col, asc) => { setSortCol(col); setSortAsc(asc); setPage(1); }}><GlColHeaderFilter label="status" opts={statusOpts} val={statusF} onChange={v => { setStatusF(v); setPage(1); }} /></ColSortMenu></th>}
-                {visibleCols.has("field")     && <th>Field</th>}
-                {visibleCols.has("changes")   && <th>Changes</th>}
+                {visibleCols.has("date")        && <th><ColSortMenu colKey="date" label="Date of change" sortCol={sortCol} sortAsc={sortAsc} isDate onSort={(col, asc) => { setSortCol(col); setSortAsc(asc); setPage(1); }} /></th>}
+                {visibleCols.has("updater")     && <th><ColSortMenu colKey="updater" label="Updated by" sortCol={sortCol} sortAsc={sortAsc} onSort={(col, asc) => { setSortCol(col); setSortAsc(asc); setPage(1); }} /></th>}
+                {visibleCols.has("key")         && <th><ColSortMenu colKey="key" label="Key" sortCol={sortCol} sortAsc={sortAsc} onSort={(col, asc) => { setSortCol(col); setSortAsc(asc); setPage(1); }} /></th>}
+                {visibleCols.has("issuetype")   && <th>Issue Type</th>}
+                {visibleCols.has("summary")     && <th><ColSortMenu colKey="summary" label="Summary" sortCol={sortCol} sortAsc={sortAsc} onSort={(col, asc) => { setSortCol(col); setSortAsc(asc); setPage(1); }} /></th>}
+                {visibleCols.has("priority")    && <th><ColSortMenu colKey="priority" label="Priority" sortCol={sortCol} sortAsc={sortAsc} onSort={(col, asc) => { setSortCol(col); setSortAsc(asc); setPage(1); }}><GlColHeaderFilter label="priority" opts={priorityOpts} val={priorityF} onChange={v => { setPriorityF(v); setPage(1); }} /></ColSortMenu></th>}
+                {visibleCols.has("status")      && <th><ColSortMenu colKey="status" label="Status" sortCol={sortCol} sortAsc={sortAsc} onSort={(col, asc) => { setSortCol(col); setSortAsc(asc); setPage(1); }}><GlColHeaderFilter label="status" opts={statusOpts} val={statusF} onChange={v => { setStatusF(v); setPage(1); }} /></ColSortMenu></th>}
+                {visibleCols.has("assignee")    && <th>Assignee</th>}
+                {visibleCols.has("reporter")    && <th>Reporter</th>}
+                {visibleCols.has("sprint")      && <th>Sprint</th>}
+                {visibleCols.has("labels")      && <th>Labels</th>}
+                {visibleCols.has("components")  && <th>Components</th>}
+                {visibleCols.has("fixversions") && <th>Fix Version</th>}
+                {visibleCols.has("resolution")  && <th>Resolution</th>}
+                {visibleCols.has("project")     && <th>Project</th>}
+                {visibleCols.has("field")       && <th>Field</th>}
+                {visibleCols.has("changes")     && <th>Changes</th>}
+                {fieldMeta.map(f => visibleCols.has(f.id) && <th key={f.id}>{f.name}</th>)}
               </tr>
             </thead>
             <tbody>
@@ -2961,15 +3042,26 @@ function GlobalPageApp() {
                           </button>
                         )}
                       </td>
-                      {visibleCols.has("date")      && <td className="td-date">{fmtDate(r.timestamp)}</td>}
-                      {visibleCols.has("updater")   && <td><div className="user-cell"><Av name={r.author}/><span>{r.author}</span></div></td>}
-                      {visibleCols.has("key")       && <td><a className="key-link" href={`/browse/${r.issueKey}`} target="_blank" rel="noreferrer">{r.issueKey}</a></td>}
-                      {visibleCols.has("issuetype") && <td className="td-field">{group.issueType || "—"}</td>}
-                      {visibleCols.has("summary")   && <td className="td-summary">{group.summary}</td>}
-                      {visibleCols.has("priority")  && <td><GlPriorityBadge v={group.priority}/></td>}
-                      {visibleCols.has("status")    && <td>{group.status ? <span className="status-badge" style={{ background: statusColor(group.status) }}>{group.status.toUpperCase()}</span> : "—"}</td>}
-                      {visibleCols.has("field")     && <td className="td-field">{r.field || "—"}</td>}
-                      {visibleCols.has("changes")   && <td><Changes from={r.from} to={r.to} field={r.field} commentBody={r.commentBody}/></td>}
+                      {visibleCols.has("date")        && <td className="td-date">{fmtDate(r.timestamp)}</td>}
+                      {visibleCols.has("updater")     && <td><div className="user-cell"><Av name={r.author}/><span>{r.author}</span></div></td>}
+                      {visibleCols.has("key")         && <td><a className="key-link" href={`/browse/${r.issueKey}`} target="_blank" rel="noreferrer">{r.issueKey}</a></td>}
+                      {visibleCols.has("issuetype")   && <td className="td-field">{group.issueType || "—"}</td>}
+                      {visibleCols.has("summary")     && <td className="td-summary">{group.summary}</td>}
+                      {visibleCols.has("priority")    && <td><GlPriorityBadge v={group.priority}/></td>}
+                      {visibleCols.has("status")      && <td>{group.status ? <span className="status-badge" style={{ background: statusColor(group.status) }}>{group.status.toUpperCase()}</span> : "—"}</td>}
+                      {visibleCols.has("assignee")    && <td className="td-field">{group.assignee    || "—"}</td>}
+                      {visibleCols.has("reporter")    && <td className="td-field">{group.reporter    || "—"}</td>}
+                      {visibleCols.has("sprint")      && <td className="td-field">{group.sprint      || "—"}</td>}
+                      {visibleCols.has("labels")      && <td className="td-field">{group.labels      || "—"}</td>}
+                      {visibleCols.has("components")  && <td className="td-field">{group.components  || "—"}</td>}
+                      {visibleCols.has("fixversions") && <td className="td-field">{group.fixVersions || "—"}</td>}
+                      {visibleCols.has("resolution")  && <td className="td-field">{group.resolution  || "—"}</td>}
+                      {visibleCols.has("project")     && <td className="td-field">{group.projectKey  || "—"}</td>}
+                      {visibleCols.has("field")       && <td className="td-field">{r.field || "—"}</td>}
+                      {visibleCols.has("changes")     && <td><Changes from={r.from} to={r.to} field={r.field} commentBody={r.commentBody}/></td>}
+                      {fieldMeta.map(f => visibleCols.has(f.id) && (
+                        <td key={f.id} className="td-field">{group.extraFields?.[f.id] || "—"}</td>
+                      ))}
                     </tr>
                   );
                 });
