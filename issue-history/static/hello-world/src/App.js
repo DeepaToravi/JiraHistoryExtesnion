@@ -262,7 +262,7 @@ function doXLS(rows, key) {
 function doPDF(rows, key) {
   const h = ["Date", "Author", "Field", "From", "To"];
   const x = v => String(v || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Work Item History</title>
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Issue Tracker</title>
 <style>body{font-family:Arial,sans-serif;padding:24px;font-size:12px}
 h2{font-size:16px;margin-bottom:12px;color:#172B4D}
 table{width:100%;border-collapse:collapse}
@@ -270,7 +270,7 @@ th{background:#0052CC;color:#fff;padding:8px 10px;text-align:left;font-size:11px
 td{border:1px solid #DFE1E6;padding:6px 10px}
 tr:nth-child(even) td{background:#F8F9FA}
 @media print{.noprint{display:none}}</style></head>
-<body><h2>${key || ""} &#8212; Work Item History</h2>
+<body><h2>${key || ""} &#8212; Issue Tracker</h2>
 <table><thead><tr>${h.map(c => `<th>${c}</th>`).join("")}</tr></thead><tbody>
 ${rows.map(r => `<tr>${[fmtDate(r.ts), r.author, r.field, r.from, r.to].map(v => `<td>${x(v)}</td>`).join("")}</tr>`).join("")}
 </tbody></table>
@@ -692,7 +692,7 @@ function IssueActivityApp() {
         <div className="perm-denied">
           <div className="perm-denied-ico">&#128274;</div>
           <p className="perm-denied-title">Access Restricted</p>
-          <p className="perm-denied-sub">View Issue History is limited to project admins for this project.</p>
+          <p className="perm-denied-sub">View Issue Tracker is limited to project admins for this project.</p>
         </div>
       )}
 
@@ -1328,7 +1328,7 @@ function ProjectActivityApp() {
           <div className="perm-denied">
             <div className="perm-denied-ico">&#128274;</div>
             <p className="perm-denied-title">Access Restricted</p>
-            <p className="perm-denied-sub">View Issue History is limited to project admins for this project.</p>
+            <p className="perm-denied-sub">View Issue Tracker is limited to project admins for this project.</p>
           </div>
         ) : (<>
       <div className="proj-bar">
@@ -1813,7 +1813,7 @@ function SharePanel({ shareUrl, onClose, issueOptions = [] }) {
         recipients:     emailRecipients,
         message:        emailMessage,
         shareUrl,
-        reportTitle:    "Issue History Global Report",
+        reportTitle:    "Issue Tracker Global Report",
         targetIssueKey: emailTargetIssue?.key || "",
       });
       if (res.success) {
@@ -1841,7 +1841,7 @@ function SharePanel({ shareUrl, onClose, issueOptions = [] }) {
         mentions,
         message:     wiMessage,
         shareUrl,
-        reportTitle: "Issue History Global Report",
+        reportTitle: "Issue Tracker Global Report",
       });
       if (res.success) {
         setShareStatus("success");
@@ -2508,7 +2508,7 @@ function GlobalPageApp() {
 </x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->
 <style>body{font-family:Calibri,Arial,sans-serif;font-size:11px}table{border-collapse:collapse;margin-bottom:24px}.sheet-title{font-size:14px;font-weight:bold;color:#172B4D;margin:12px 0 6px}</style></head>
 <body>
-<p class="sheet-title">&#128202; Issue History — Advanced Report (${filteredRows.length} changes)</p>
+<p class="sheet-title">&#128202; Issue Tracker — Advanced Report (${filteredRows.length} changes)</p>
 <table>
   <thead><tr>
     <th style="${HEADER_STYLE};width:130px">Date</th><th style="${HEADER_STYLE};width:70px">Key</th>
@@ -2718,7 +2718,7 @@ function GlobalPageApp() {
 
   return (
     <div className="wih proj-page">
-      <h2 className="proj-title">Issue History</h2>
+      <h2 className="proj-title">Issue Tracker</h2>
 
       {/* ── Top-level view tabs ── */}
       <div className="proj-tabs">

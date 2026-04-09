@@ -1,28 +1,28 @@
 modules:
   jira:issueActivity:
     - key: issue-history-activity
-      title: Work Item History
+      title: Issue Tracker
       resource: main
       resolver:
         function: handler
 
   jira:projectPage:
     - key: issue-history-project-page
-      title: Activities (by Issue History)
+      title: Issue Tracker
       resource: main
       resolver:
         function: handler
 
   jira:globalPage:
     - key: issue-history-global-page
-      title: Issue History
+      title: Issue Tracker
       resource: main
       resolver:
         function: handler
 
   jira:dashboardGadget:
     - key: issue-history-dashboard-gadget
-      title: Issue History Gadget
+      title: Issue Tracker Gadget
       description: View recent issue activity, top users, and change stats across your projects
       thumbnail: /thumbnail.svg
       resource: main
