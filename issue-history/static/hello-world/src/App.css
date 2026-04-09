@@ -551,6 +551,8 @@
 
 /* Selected row highlight */
 .tr-selected        { background:#EAF2FF !important; }
+/* Non-revertable row — checkbox is disabled, row is slightly muted */
+.tr-no-revert .td-cb input[type="checkbox"] { opacity:0.35; cursor:not-allowed; }
 
 /* ── Revert Modal ──────────────────────────────────────────────────────── */
 .modal-overlay      { position:fixed; inset:0; background:rgba(9,30,66,.54); z-index:1000; display:flex; align-items:center; justify-content:center; padding:16px; }

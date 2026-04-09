@@ -42,16 +42,19 @@ resolver.define('fetchHistory', async (req) => {
         const createdTs  = c.created;
         const updatedTs  = c.updated;
         const currentText = extractAdfText(c.body);
-        // Always record ADDED comment
+        // Detect whether this comment was later edited
+        const wasEdited = updatedTs && new Date(updatedTs) - new Date(createdTs) > 5000;
+        // Always record ADDED comment — if it was later edited, don't show the
+        // current (post-edit) body as the "added" text since that would be misleading.
         commentHistory.push({
           timestamp: createdTs,
           author: authorName,
-          items: [{ field: 'comment', fromString: '', toString: currentText || 'Comment added' }],
+          items: [{ field: 'comment', fromString: '', toString: wasEdited ? 'Comment added' : (currentText || 'Comment added') }],
           type: 'comment',
-          commentBody: currentText,
+          commentBody: wasEdited ? '' : currentText,
         });
         // Record EDITED if updated is meaningfully later than created (> 5 seconds)
-        if (updatedTs && new Date(updatedTs) - new Date(createdTs) > 5000) {
+        if (wasEdited) {
           const editorName = c.updateAuthor?.displayName || authorName;
           commentHistory.push({
             timestamp: updatedTs,
@@ -816,8 +819,9 @@ resolver.define('getSharedReports', async () => {
 
 // ── Bulk Revert Changes ───────────────────────────────────────────────────────
 // Accepts an array of change rows and reverts each field back to its "from" value.
-// Supported fields: summary, priority, labels, status (via transitions).
-// Unsupported fields return a descriptive error so the UI can show partial results.
+// Supports: summary, priority, labels, story points, status, assignee, fix versions,
+// components, issue type, resolution, due date, description, environment, sprint,
+// and all custom fields (number, option, multi-option, user, date, text).
 
 resolver.define('revertChanges', async (req) => {
   const { issueKey, changes } = req.payload || {};
@@ -845,44 +849,250 @@ resolver.define('revertChanges', async (req) => {
     };
   }
 
-  const results      = [];
-  const fieldsPayload = {};
-  const statusItems  = [];
+  // ── Fetch all field metadata: map by id (lowercase) and name (lowercase) ──
+  const fieldById   = {};
+  const fieldByName = {};
+  try {
+    const fResp = await api.asUser().requestJira(route`/rest/api/3/field`);
+    const fData = await fResp.json();
+    (Array.isArray(fData) ? fData : []).forEach(f => {
+      if (f.id)   fieldById[f.id.toLowerCase()]     = f;
+      if (f.name) fieldByName[f.name.toLowerCase()] = f;
+    });
+  } catch (e) {
+    console.error('revertChanges: could not fetch field metadata', e.message);
+  }
+
+  function resolveMeta(name) {
+    if (!name) return null;
+    const lc = name.toLowerCase().trim();
+    return fieldById[lc] || fieldByName[lc] || null;
+  }
+
+  // ── Helper: normalise any date/datetime string to yyyy-MM-dd ─────────────
+  // Changelog stores dates as "2026-04-22 00:00:00.0" or ISO strings.
+  // Jira date fields only accept "yyyy-MM-dd".
+  function normalizeDate(val) {
+    if (!val) return null;
+    // Already yyyy-MM-dd
+    if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return val;
+    // ISO 8601 or "yyyy-MM-dd HH:mm:ss..." — take the first 10 chars
+    const m = String(val).match(/^(\d{4}-\d{2}-\d{2})/);
+    if (m) return m[1];
+    // Try parsing as a JS Date as last resort
+    const d = new Date(val);
+    if (!isNaN(d.getTime())) {
+      return d.toISOString().slice(0, 10);
+    }
+    return null;
+  }
+
+  // ── Helper: search for a user accountId by display name ──────────────────
+  async function findAccountId(displayName) {
+    if (!displayName) return null;
+    try {
+      const resp = await api.asUser().requestJira(
+        route`/rest/api/3/user/search?query=${displayName}&maxResults=5`
+      );
+      const users = await resp.json();
+      const exact = (Array.isArray(users) ? users : []).find(
+        u => (u.displayName || '').toLowerCase() === displayName.toLowerCase()
+      );
+      return (exact || (Array.isArray(users) && users[0]))?.accountId || null;
+    } catch (_) { return null; }
+  }
+
+  const results            = [];
+  const fieldsPayload      = {};
+  const fieldsPayloadOwners = new Set(); // change.field values whose data went into fieldsPayload
+  const statusItems        = []; // { field, fromVal }
+  const assigneeItems      = []; // { field, fromVal, fieldId }
+  const sprintItems        = []; // { field, fromVal, fieldId }
+  const teamItems          = []; // { field, fromVal, fieldId }
 
   for (const change of changes) {
-    const fieldName = (change.field || '').toLowerCase().trim();
-    const fromVal   = change.from != null ? String(change.from) : '';
+    const fieldName  = (change.field || '').toLowerCase().trim();
+    const fromVal    = change.from != null ? String(change.from) : '';
+    const meta       = resolveMeta(change.field);
+    const fieldId    = meta?.id || null;
+    const schemaType = meta?.schema?.type  || '';
+    const schemaItems= meta?.schema?.items || '';
 
-    if (fieldName === 'summary') {
+    // ── STATUS ───────────────────────────────────────────────────────────────
+    if (fieldName === 'status') {
+      statusItems.push({ field: change.field, fromVal });
+
+    // ── SUMMARY ──────────────────────────────────────────────────────────────
+    } else if (fieldName === 'summary') {
       fieldsPayload['summary'] = fromVal;
+      fieldsPayloadOwners.add(change.field);
       results.push({ field: change.field, success: true });
+
+    // ── PRIORITY ─────────────────────────────────────────────────────────────
     } else if (fieldName === 'priority') {
       fieldsPayload['priority'] = fromVal ? { name: fromVal } : null;
+      fieldsPayloadOwners.add(change.field);
       results.push({ field: change.field, success: true });
+
+    // ── LABELS ───────────────────────────────────────────────────────────────
     } else if (fieldName === 'labels') {
       fieldsPayload['labels'] = fromVal ? fromVal.split(/[\s,]+/).filter(Boolean) : [];
+      fieldsPayloadOwners.add(change.field);
       results.push({ field: change.field, success: true });
+
+    // ── STORY POINTS ─────────────────────────────────────────────────────────
     } else if (fieldName === 'story points' || fieldName === 'story point estimate') {
-      const num = parseFloat(fromVal);
-      if (!isNaN(num)) {
-        fieldsPayload['story_points'] = num;
+      const spId = fieldId || 'story_points';
+      if (!fromVal) {
+        fieldsPayload[spId] = null;
+        fieldsPayloadOwners.add(change.field);
         results.push({ field: change.field, success: true });
       } else {
-        results.push({ field: change.field, success: false, error: 'Could not parse story point value' });
+        const num = parseFloat(fromVal);
+        if (!isNaN(num)) {
+          fieldsPayload[spId] = num;
+          fieldsPayloadOwners.add(change.field);
+          results.push({ field: change.field, success: true });
+        } else {
+          results.push({ field: change.field, success: false, error: 'Could not parse story point value' });
+        }
       }
-    } else if (fieldName === 'status') {
-      statusItems.push({ field: change.field, fromVal });
-      // result pushed after transition attempt below
+
+    // ── ASSIGNEE ─────────────────────────────────────────────────────────────
+    } else if (fieldName === 'assignee') {
+      assigneeItems.push({ field: change.field, fromVal, fieldId: 'assignee' });
+
+    // ── FIX VERSIONS ─────────────────────────────────────────────────────────
+    } else if (fieldName === 'fix version' || fieldName === 'fix versions' || fieldId === 'fixversions') {
+      fieldsPayload['fixVersions'] = fromVal
+        ? fromVal.split(',').map(v => ({ name: v.trim() })).filter(v => v.name)
+        : [];
+      fieldsPayloadOwners.add(change.field);
+      results.push({ field: change.field, success: true });
+
+    // ── COMPONENTS ───────────────────────────────────────────────────────────
+    } else if (fieldName === 'component' || fieldName === 'components' || fieldId === 'components') {
+      fieldsPayload['components'] = fromVal
+        ? fromVal.split(',').map(v => ({ name: v.trim() })).filter(v => v.name)
+        : [];
+      fieldsPayloadOwners.add(change.field);
+      results.push({ field: change.field, success: true });
+
+    // ── ISSUE TYPE ────────────────────────────────────────────────────────────
+    } else if (fieldName === 'issuetype' || fieldName === 'issue type') {
+      if (fromVal) {
+        fieldsPayload['issuetype'] = { name: fromVal };
+        fieldsPayloadOwners.add(change.field);
+        results.push({ field: change.field, success: true });
+      } else {
+        results.push({ field: change.field, success: false, error: 'No issue type value to revert to' });
+      }
+
+    // ── RESOLUTION ───────────────────────────────────────────────────────────
+    } else if (fieldName === 'resolution') {
+      fieldsPayload['resolution'] = fromVal ? { name: fromVal } : null;
+      fieldsPayloadOwners.add(change.field);
+      results.push({ field: change.field, success: true });
+
+    // ── DUE DATE ─────────────────────────────────────────────────────────────
+    } else if (fieldName === 'duedate' || fieldName === 'due date') {
+      fieldsPayload['duedate'] = normalizeDate(fromVal);
+      fieldsPayloadOwners.add(change.field);
+      results.push({ field: change.field, success: true });
+
+    // ── DESCRIPTION ──────────────────────────────────────────────────────────
+    } else if (fieldName === 'description') {
+      // Changelog stores plain-text snapshot; wrap it as ADF paragraph
+      fieldsPayload['description'] = fromVal
+        ? { type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text: fromVal }] }] }
+        : null;
+      fieldsPayloadOwners.add(change.field);
+      results.push({ field: change.field, success: true });
+
+    // ── ENVIRONMENT ──────────────────────────────────────────────────────────
+    } else if (fieldName === 'environment') {
+      fieldsPayload['environment'] = fromVal
+        ? { type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text: fromVal }] }] }
+        : null;
+      fieldsPayloadOwners.add(change.field);
+      results.push({ field: change.field, success: true });
+
+    // ── PARENT ───────────────────────────────────────────────────────────────
+    } else if (fieldName === 'parent' || fieldName === 'issueparentassociation' || fieldId === 'parent') {
+      if (!fromVal) {
+        // Removing the parent — set to null to detach from epic/parent
+        fieldsPayload['parent'] = null;
+        fieldsPayloadOwners.add(change.field);
+        results.push({ field: change.field, success: true });
+      } else {
+        // fromString may be "PROJ-5" or "PROJ-5 - Some Summary" — extract just the key
+        const keyMatch = String(fromVal).match(/^([A-Z][A-Z0-9_]+-\d+)/);
+        const parentKey = keyMatch ? keyMatch[1] : String(fromVal).trim();
+        if (parentKey) {
+          fieldsPayload['parent'] = { key: parentKey };
+          fieldsPayloadOwners.add(change.field);
+          results.push({ field: change.field, success: true });
+        } else {
+          results.push({ field: change.field, success: false, error: 'Could not parse parent issue key' });
+        }
+      }
+
+    // ── SPRINT ───────────────────────────────────────────────────────────────
+    } else if (fieldName === 'sprint' || fieldId === 'customfield_10020') {
+      sprintItems.push({ field: change.field, fromVal, fieldId: fieldId || 'customfield_10020' });
+
+    // ── CUSTOM FIELDS — best-effort by schema type ────────────────────────────
+    } else if (meta && meta.id) {
+      const cfId = meta.id;
+      if (!fromVal && fromVal !== 0) {
+        fieldsPayload[cfId] = null;
+        fieldsPayloadOwners.add(change.field);
+        results.push({ field: change.field, success: true });
+      } else if (schemaType === 'number') {
+        const num = parseFloat(fromVal);
+        fieldsPayload[cfId] = isNaN(num) ? null : num;
+        fieldsPayloadOwners.add(change.field);
+        results.push({ field: change.field, success: true });
+      } else if (schemaType === 'array' && schemaItems === 'string') {
+        fieldsPayload[cfId] = fromVal.split(',').map(v => v.trim()).filter(Boolean);
+        fieldsPayloadOwners.add(change.field);
+        results.push({ field: change.field, success: true });
+      } else if (schemaType === 'option') {
+        fieldsPayload[cfId] = { value: fromVal };
+        fieldsPayloadOwners.add(change.field);
+        results.push({ field: change.field, success: true });
+      } else if (schemaType === 'array' && schemaItems === 'option') {
+        fieldsPayload[cfId] = fromVal.split(',').map(v => ({ value: v.trim() })).filter(v => v.value);
+        fieldsPayloadOwners.add(change.field);
+        results.push({ field: change.field, success: true });
+      } else if (schemaType === 'user') {
+        // Handled separately (requires accountId lookup)
+        assigneeItems.push({ field: change.field, fromVal, fieldId: cfId });
+      } else if (schemaType === 'team') {
+        // Handled separately (requires team ID lookup by name)
+        teamItems.push({ field: change.field, fromVal, fieldId: cfId });
+      } else if (schemaType === 'date' || schemaType === 'datetime') {
+        fieldsPayload[cfId] = normalizeDate(fromVal);
+        fieldsPayloadOwners.add(change.field);
+        results.push({ field: change.field, success: true });
+      } else {
+        // Default: set as plain string value
+        fieldsPayload[cfId] = fromVal;
+        fieldsPayloadOwners.add(change.field);
+        results.push({ field: change.field, success: true });
+      }
+
+    // ── UNRECOGNISED ─────────────────────────────────────────────────────────
     } else {
       results.push({
         field: change.field,
         success: false,
-        error: 'Automatic revert is not supported for this field — please update it manually in Jira.',
+        error: 'Field not recognized or automatic revert is not supported — please update it manually in Jira.',
       });
     }
   }
 
-  // Apply simple field updates in one PUT call
+  // ── PUT: apply all simple field updates in one call ───────────────────────
   if (Object.keys(fieldsPayload).length > 0) {
     try {
       const resp = await api.asUser().requestJira(
@@ -899,23 +1109,22 @@ resolver.define('revertChanges', async (req) => {
           const d = await resp.json();
           errText = JSON.stringify(d.errors || d.errorMessages || d);
         } catch (_) {}
-        // Mark the affected result entries as failed
         for (let i = 0; i < results.length; i++) {
-          if (results[i].success && Object.keys(fieldsPayload).some(
-            k => results[i].field?.toLowerCase().includes(k.replace('_', ' '))
-          )) {
+          if (results[i].success && fieldsPayloadOwners.has(results[i].field)) {
             results[i] = { ...results[i], success: false, error: errText };
           }
         }
       }
     } catch (e) {
       for (let i = 0; i < results.length; i++) {
-        if (results[i].success) results[i] = { ...results[i], success: false, error: e.message };
+        if (results[i].success && fieldsPayloadOwners.has(results[i].field)) {
+          results[i] = { ...results[i], success: false, error: e.message };
+        }
       }
     }
   }
 
-  // Handle status transitions individually
+  // ── STATUS: handle via workflow transitions ───────────────────────────────
   for (const { field, fromVal } of statusItems) {
     if (!fromVal) {
       results.push({ field, success: false, error: 'No target status value to revert to' });
@@ -947,6 +1156,138 @@ resolver.define('revertChanges', async (req) => {
       );
       const ok = postResp.status === 204 || postResp.ok;
       results.push({ field, success: ok, error: ok ? null : `HTTP ${postResp.status}` });
+    } catch (e) {
+      results.push({ field, success: false, error: e.message });
+    }
+  }
+
+  // ── ASSIGNEE / USER FIELDS: look up accountId by display name ────────────
+  for (const { field, fromVal, fieldId } of assigneeItems) {
+    if (!fromVal) {
+      try {
+        const resp = await api.asUser().requestJira(route`/rest/api/3/issue/${issueKey}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fields: { [fieldId]: null } }),
+        });
+        const ok = resp.status === 204 || resp.ok;
+        results.push({ field, success: ok, error: ok ? null : `HTTP ${resp.status}` });
+      } catch (e) {
+        results.push({ field, success: false, error: e.message });
+      }
+      continue;
+    }
+    const accountId = await findAccountId(fromVal);
+    if (!accountId) {
+      results.push({ field, success: false, error: `Could not find user "${fromVal}" — they may have left the organisation.` });
+      continue;
+    }
+    try {
+      const resp = await api.asUser().requestJira(route`/rest/api/3/issue/${issueKey}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields: { [fieldId]: { accountId } } }),
+      });
+      const ok = resp.status === 204 || resp.ok;
+      results.push({ field, success: ok, error: ok ? null : `HTTP ${resp.status}` });
+    } catch (e) {
+      results.push({ field, success: false, error: e.message });
+    }
+  }
+
+  // ── SPRINT: find sprint by name then move issue ───────────────────────────
+  for (const { field, fromVal, fieldId } of sprintItems) {
+    if (!fromVal) {
+      results.push({ field, success: false, error: 'Cannot determine which sprint to revert to — please update manually.' });
+      continue;
+    }
+    let sprintId = null;
+    try {
+      const boardResp = await api.asUser().requestJira(route`/rest/agile/1.0/board?maxResults=50`);
+      const boardData = await boardResp.json();
+      for (const board of (boardData.values || []).slice(0, 15)) {
+        try {
+          const sResp = await api.asUser().requestJira(
+            route`/rest/agile/1.0/board/${board.id}/sprint?maxResults=100&state=active,future,closed`
+          );
+          const sData = await sResp.json();
+          const match = (sData.values || []).find(s => s.name === fromVal);
+          if (match) { sprintId = match.id; break; }
+        } catch (_) {}
+      }
+    } catch (e) {
+      results.push({ field, success: false, error: `Sprint lookup failed: ${e.message}` });
+      continue;
+    }
+    if (!sprintId) {
+      results.push({ field, success: false, error: `Sprint "${fromVal}" not found — it may have been completed or deleted.` });
+      continue;
+    }
+    try {
+      const resp = await api.asUser().requestJira(route`/rest/api/3/issue/${issueKey}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields: { [fieldId]: { id: sprintId } } }),
+      });
+      const ok = resp.status === 204 || resp.ok;
+      results.push({ field, success: ok, error: ok ? null : `HTTP ${resp.status}` });
+    } catch (e) {
+      results.push({ field, success: false, error: e.message });
+    }
+  }
+
+  // ── TEAM FIELDS: look up team ID by searching project issues ───────────────
+  for (const { field, fromVal, fieldId } of teamItems) {
+    if (!fromVal) {
+      try {
+        const resp = await api.asUser().requestJira(route`/rest/api/3/issue/${issueKey}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fields: { [fieldId]: null } }),
+        });
+        const ok = resp.status === 204 || resp.ok;
+        results.push({ field, success: ok, error: ok ? null : `HTTP ${resp.status}` });
+      } catch (e) {
+        results.push({ field, success: false, error: e.message });
+      }
+      continue;
+    }
+    // Search for any issue in the same project that has this team set,
+    // so we can extract the numeric/UUID team ID from its field value.
+    let teamId = null;
+    try {
+      const projKey = issueKey.split('-')[0];
+      // JQL: search by the field's display name (e.g. "Team" = "abcabc")
+      const jql = `project = "${projKey}" AND "${field}" = "${fromVal}" ORDER BY updated DESC`;
+      const searchResp = await api.asUser().requestJira(
+        route`/rest/api/3/search/jql?jql=${jql}&fields=${fieldId}&maxResults=5`
+      );
+      const searchData = await searchResp.json();
+      for (const issue of (searchData.issues || [])) {
+        const tv = issue.fields?.[fieldId];
+        if (tv && tv.id) { teamId = tv.id; break; }
+        // Some instances return the team as an array
+        if (Array.isArray(tv) && tv[0]?.id) { teamId = tv[0].id; break; }
+      }
+    } catch (e) {
+      console.error('Team ID lookup error:', e.message);
+    }
+    if (!teamId) {
+      results.push({
+        field,
+        success: false,
+        error: `Could not resolve team "${fromVal}" — no issues in this project currently have that team set. Please update the Team field manually in Jira.`,
+      });
+      continue;
+    }
+    try {
+      const resp = await api.asUser().requestJira(route`/rest/api/3/issue/${issueKey}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields: { [fieldId]: { id: teamId } } }),
+      });
+      const ok = resp.status === 204 || resp.ok;
+      results.push({ field, success: ok, error: ok ? null : `HTTP ${resp.status}` });
     } catch (e) {
       results.push({ field, success: false, error: e.message });
     }

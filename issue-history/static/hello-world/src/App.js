@@ -110,6 +110,21 @@ const STATUS_MAP = {
 function statusColor(v) { return STATUS_MAP[(v || "").toLowerCase()] || "#42526E"; }
 function rowId(r) { return `${r.ts}|${r.author}|${r.field}|${r.from}|${r.to}`; }
 
+// Fields that cannot be automatically reverted — checkboxes are disabled for these
+const NON_REVERTABLE_FIELDS = new Set([
+  'link', 'links', 'linked issues', 'issuelinks', 'issue links',
+  'timespent', 'time spent',
+  'timeoriginalestimate', 'original estimate', 'time original estimate',
+  'timeestimate', 'remaining estimate', 'time estimate',
+  'worklog', 'worklogid', 'worklogtimespent', 'worklog time spent',
+  'attachment',
+  'comment',
+]);
+function isRevertable(fieldName) {
+  if (!fieldName) return false;
+  return !NON_REVERTABLE_FIELDS.has(fieldName.toLowerCase().trim());
+}
+
 function Av({ name }) {
   return (
     <span className="av" style={{ background: `hsl(${avatarHue(name)},55%,44%)` }}>
@@ -724,12 +739,12 @@ function IssueActivityApp() {
                 <th className="th-cb">
                   <input
                     type="checkbox"
-                    title="Select / deselect this page"
-                    checked={pagedRows.length > 0 && pagedRows.every(r => selectedIds.has(rowId(r)))}
-                    ref={el => { if (el) el.indeterminate = pagedRows.some(r => selectedIds.has(rowId(r))) && !pagedRows.every(r => selectedIds.has(rowId(r))); }}
+                    title="Select / deselect revertable rows on this page"
+                    checked={pagedRows.filter(r => isRevertable(r.field)).length > 0 && pagedRows.filter(r => isRevertable(r.field)).every(r => selectedIds.has(rowId(r)))}
+                    ref={el => { if (el) { const rev = pagedRows.filter(r => isRevertable(r.field)); el.indeterminate = rev.some(r => selectedIds.has(rowId(r))) && !rev.every(r => selectedIds.has(rowId(r))); } }}
                     onChange={e => {
                       const next = new Set(selectedIds);
-                      pagedRows.forEach(r => { e.target.checked ? next.add(rowId(r)) : next.delete(rowId(r)); });
+                      pagedRows.filter(r => isRevertable(r.field)).forEach(r => { e.target.checked ? next.add(rowId(r)) : next.delete(rowId(r)); });
                       setSelectedIds(next);
                     }}
                   />
@@ -747,11 +762,13 @@ function IssueActivityApp() {
                 const id = rowId(r);
                 const checked = selectedIds.has(id);
                 return (
-                  <tr key={i} className={checked ? "tr-selected" : ""}>
+                  <tr key={i} className={`${checked ? "tr-selected" : ""}${!isRevertable(r.field) ? " tr-no-revert" : ""}`}>
                     <td className="td-cb">
                       <input
                         type="checkbox"
                         checked={checked}
+                        disabled={!isRevertable(r.field)}
+                        title={!isRevertable(r.field) ? `"${r.field}" changes cannot be automatically reverted` : undefined}
                         onChange={e => {
                           const next = new Set(selectedIds);
                           e.target.checked ? next.add(id) : next.delete(id);
@@ -1429,12 +1446,12 @@ function ProjectActivityApp() {
                 <th className="th-cb">
                   <input
                     type="checkbox"
-                    title="Select / deselect this page"
-                    checked={pagedRows.length > 0 && pagedRows.every(r => selectedIds.has(projRowId(r)))}
-                    ref={el => { if (el) el.indeterminate = pagedRows.some(r => selectedIds.has(projRowId(r))) && !pagedRows.every(r => selectedIds.has(projRowId(r))); }}
+                    title="Select / deselect revertable rows on this page"
+                    checked={pagedRows.filter(r => isRevertable(r.field)).length > 0 && pagedRows.filter(r => isRevertable(r.field)).every(r => selectedIds.has(projRowId(r)))}
+                    ref={el => { if (el) { const rev = pagedRows.filter(r => isRevertable(r.field)); el.indeterminate = rev.some(r => selectedIds.has(projRowId(r))) && !rev.every(r => selectedIds.has(projRowId(r))); } }}
                     onChange={e => {
                       const next = new Set(selectedIds);
-                      pagedRows.forEach(r => { e.target.checked ? next.add(projRowId(r)) : next.delete(projRowId(r)); });
+                      pagedRows.filter(r => isRevertable(r.field)).forEach(r => { e.target.checked ? next.add(projRowId(r)) : next.delete(projRowId(r)); });
                       setSelectedIds(next);
                     }}
                   />
@@ -1460,11 +1477,13 @@ function ProjectActivityApp() {
                 const id = projRowId(r);
                 const checked = selectedIds.has(id);
                 return (
-                  <tr key={i} className={checked ? "tr-selected" : ""}>
+                  <tr key={i} className={`${checked ? "tr-selected" : ""}${!isRevertable(r.field) ? " tr-no-revert" : ""}`}>
                     <td className="td-cb">
                       <input
                         type="checkbox"
                         checked={checked}
+                        disabled={!isRevertable(r.field)}
+                        title={!isRevertable(r.field) ? `"${r.field}" changes cannot be automatically reverted` : undefined}
                         onChange={e => {
                           const next = new Set(selectedIds);
                           e.target.checked ? next.add(id) : next.delete(id);
@@ -2978,12 +2997,12 @@ function GlobalPageApp() {
                 <th className="th-cb">
                   <input
                     type="checkbox"
-                    title="Select / deselect visible rows on this page"
-                    checked={glAllVisiblePageRows.length > 0 && glAllVisiblePageRows.every(r => glSelectedIds.has(glRowId(r)))}
-                    ref={el => { if (el) el.indeterminate = glAllVisiblePageRows.some(r => glSelectedIds.has(glRowId(r))) && !glAllVisiblePageRows.every(r => glSelectedIds.has(glRowId(r))); }}
+                    title="Select / deselect revertable rows on this page"
+                    checked={glAllVisiblePageRows.filter(r => isRevertable(r.field)).length > 0 && glAllVisiblePageRows.filter(r => isRevertable(r.field)).every(r => glSelectedIds.has(glRowId(r)))}
+                    ref={el => { if (el) { const rev = glAllVisiblePageRows.filter(r => isRevertable(r.field)); el.indeterminate = rev.some(r => glSelectedIds.has(glRowId(r))) && !rev.every(r => glSelectedIds.has(glRowId(r))); } }}
                     onChange={e => {
                       const next = new Set(glSelectedIds);
-                      glAllVisiblePageRows.forEach(r => { e.target.checked ? next.add(glRowId(r)) : next.delete(glRowId(r)); });
+                      glAllVisiblePageRows.filter(r => isRevertable(r.field)).forEach(r => { e.target.checked ? next.add(glRowId(r)) : next.delete(glRowId(r)); });
                       setGlSelectedIds(next);
                     }}
                   />
@@ -3017,11 +3036,13 @@ function GlobalPageApp() {
                   const rid = glRowId(r);
                   const checked = glSelectedIds.has(rid);
                   return (
-                    <tr key={`${group.issueKey}-${ri}`} className={`${ri > 0 ? "gl-subrow" : ""}${checked ? " tr-selected" : ""}`}>
+                    <tr key={`${group.issueKey}-${ri}`} className={`${ri > 0 ? "gl-subrow" : ""}${checked ? " tr-selected" : ""}${!isRevertable(r.field) ? " tr-no-revert" : ""}`}>
                       <td className="td-cb">
                         <input
                           type="checkbox"
                           checked={checked}
+                          disabled={!isRevertable(r.field)}
+                          title={!isRevertable(r.field) ? `"${r.field}" changes cannot be automatically reverted` : undefined}
                           onChange={e => {
                             const next = new Set(glSelectedIds);
                             e.target.checked ? next.add(rid) : next.delete(rid);
