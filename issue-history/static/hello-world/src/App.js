@@ -125,6 +125,43 @@ function isRevertable(fieldName) {
   return !NON_REVERTABLE_FIELDS.has(fieldName.toLowerCase().trim());
 }
 
+// Maps raw Jira changelog field names → proper Jira UI terminology
+const FIELD_DISPLAY_MAP = {
+  'link':                    'Linked Issues',
+  'links':                   'Linked Issues',
+  'issuelinks':              'Linked Issues',
+  'issue links':             'Linked Issues',
+  'linked issues':           'Linked Issues',
+  'issueparentassociation':  'Parent',
+  'parent':                  'Parent',
+  'issuetype':               'Issue Type',
+  'duedate':                 'Due Date',
+  'fixversions':             'Fix Version',
+  'fix version':             'Fix Version',
+  'fix versions':            'Fix Version',
+  'timespent':               'Time Spent',
+  'timeestimate':            'Remaining Estimate',
+  'timeoriginalestimate':    'Original Estimate',
+  'resolutiondate':          'Resolution Date',
+  'epiclink':                'Epic Link',
+  'epic link':               'Epic Link',
+};
+const LINK_FIELD_SYNONYMS = new Set(['link', 'links', 'linked issues', 'issuelinks', 'issue links']);
+function displayFieldName(field) {
+  if (!field) return field;
+  return FIELD_DISPLAY_MAP[field.toLowerCase().trim()] || field;
+}
+function fieldMatches(rowField, filterVal) {
+  if (!rowField || !filterVal) return false;
+  if (rowField === filterVal) return true;
+  const rf = rowField.toLowerCase().trim();
+  const fv = filterVal.toLowerCase().trim();
+  // Match if both resolve to the same display name
+  const rdisplay = FIELD_DISPLAY_MAP[rf] || rowField;
+  const fdisplay = FIELD_DISPLAY_MAP[fv] || filterVal;
+  return rdisplay.toLowerCase() === fdisplay.toLowerCase();
+}
+
 function Av({ name }) {
   return (
     <span className="av" style={{ background: `hsl(${avatarHue(name)},55%,44%)` }}>
@@ -553,9 +590,17 @@ function IssueActivityApp() {
         lowerSeen.add(f.name.toLowerCase());
       }
     });
+    // Deduplicate synonym fields (e.g. both "Link" and "Linked Issues" → one entry)
+    const dedupByDisplay = new Map();
+    Array.from(merged).forEach(f => {
+      const key = displayFieldName(f).toLowerCase();
+      if (!dedupByDisplay.has(key)) dedupByDisplay.set(key, f);
+    });
     return [
       { value: "any", label: "All Fields" },
-      ...Array.from(merged).sort((a, b) => a.localeCompare(b)).map(f => ({ value: f, label: f })),
+      ...Array.from(dedupByDisplay.values())
+        .sort((a, b) => displayFieldName(a).localeCompare(displayFieldName(b)))
+        .map(f => ({ value: f, label: displayFieldName(f) })),
     ];
   }, [allRows, allJiraFields]);
 
@@ -563,7 +608,7 @@ function IssueActivityApp() {
     let r = allRows;
     if (dateF  !== "any") r = r.filter(x => matchDate(x.ts, dateF, customStart, customEnd));
     if (userF  !== "any") r = r.filter(x => x.author === userF);
-    if (fieldF !== "any") r = r.filter(x => x.field  === fieldF);
+    if (fieldF !== "any") r = r.filter(x => fieldMatches(x.field, fieldF));
     if (search.trim()) {
       const q = search.toLowerCase();
       r = r.filter(x => (x.author + x.field + x.from + x.to).toLowerCase().includes(q));
@@ -783,7 +828,7 @@ function IssueActivityApp() {
                         <span>{r.author}</span>
                       </div>
                     </td>
-                    <td className="td-field">{r.field || "\u2014"}</td>
+                    <td className="td-field">{displayFieldName(r.field) || "\u2014"}</td>
                     <td><Changes from={r.from} to={r.to} field={r.field} commentBody={r.commentBody} /></td>
                   </tr>
                 );
@@ -810,7 +855,7 @@ function IssueActivityApp() {
                 <div className="s-head">
                   <strong>{r.author}</strong>
                   {r.field
-                    ? <span> {r.from && r.to ? "changed" : r.to ? "updated" : "cleared"} the <em>{r.field}</em></span>
+                    ? <span> {r.from && r.to ? "changed" : r.to ? "updated" : "cleared"} the <em>{displayFieldName(r.field)}</em></span>
                     : <span> made a change</span>}
                   <span className="s-when"> {fmtDate(r.ts)}</span>
                 </div>
@@ -1136,7 +1181,7 @@ function ProjectActivityApp() {
     let r = allRows;
     if (userF     !== "any") r = r.filter(x => x.author   === userF);
     if (keyF.length > 0)    r = r.filter(x => keyF.includes(x.issueKey));
-    if (fieldF    !== "any") r = r.filter(x => x.field    === fieldF);
+    if (fieldF    !== "any") r = r.filter(x => fieldMatches(x.field, fieldF));
     if (assigneeF !== "any") r = r.filter(x => x.assignee === assigneeF);
     if (sprintF   !== "any") r = r.filter(x => x.sprint   === sprintF);
     if (search.trim()) {
