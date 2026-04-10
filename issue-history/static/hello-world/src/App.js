@@ -2763,7 +2763,6 @@ function GlobalPageApp() {
 
   return (
     <div className="wih proj-page">
-      <h2 className="proj-title">Issue Tracker</h2>
 
       {/* ── Top-level view tabs ── */}
       <div className="proj-tabs">
