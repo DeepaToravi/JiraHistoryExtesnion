@@ -216,6 +216,14 @@ export default function DashboardGadget() {
   const [visibleCols,     setVisibleCols]     = React.useState(new Set(ALL_COLS));
   const [refreshInterval, setRefreshInterval] = React.useState("never");
 
+  // pagination + search
+  const [pageSize,    setPageSize]    = React.useState(100);
+  const [page,        setPage]        = React.useState(1);
+  const [pageInput,   setPageInput]   = React.useState("");
+  const [gadSearch,   setGadSearch]   = React.useState("");
+  const [lastRefresh, setLastRefresh] = React.useState(null);
+  const [showSearch,  setShowSearch]  = React.useState(false);
+
   const timerRef = React.useRef(null);
 
   const closeAll = React.useCallback(() => {
@@ -233,6 +241,8 @@ export default function DashboardGadget() {
         setHistory(res.history || []);
         setProjects(res.projects || []);
         setCurUser(res.currentUser || null);
+        setLastRefresh(new Date());
+        setPage(1);
         setLoading(false);
       })
       .catch(e => { setError(e.message || "Failed to load"); setLoading(false); });
@@ -260,9 +270,40 @@ export default function DashboardGadget() {
     if (keyFilter.length > 0)   r = r.filter(x => keyFilter.includes(x.issueKey));
     if (fieldFilter.length > 0) r = r.filter(x => fieldFilter.includes(x.field));
     if (selectedUser)            r = r.filter(x => x.author === selectedUser);
+    if (gadSearch.trim()) {
+      const q = gadSearch.trim().toLowerCase();
+      r = r.filter(x =>
+        (x.issueKey||"").toLowerCase().includes(q) ||
+        (x.author||"").toLowerCase().includes(q)   ||
+        (x.field||"").toLowerCase().includes(q)    ||
+        (x.summary||"").toLowerCase().includes(q)  ||
+        (x.from||"").toLowerCase().includes(q)     ||
+        (x.to||"").toLowerCase().includes(q)
+      );
+    }
     if (sortAsc) r = [...r].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
     return r;
-  }, [history, keyFilter, fieldFilter, selectedUser, sortAsc]);
+  }, [history, keyFilter, fieldFilter, selectedUser, gadSearch, sortAsc]);
+
+  // reset to page 1 whenever filters change
+  React.useEffect(() => { setPage(1); }, [keyFilter, fieldFilter, selectedUser, gadSearch, sortAsc]);
+
+  const totalPages  = Math.max(1, Math.ceil(rows.length / pageSize));
+  const safePage    = Math.min(page, totalPages);
+  const pagedRows   = rows.slice((safePage - 1) * pageSize, safePage * pageSize);
+
+  function goToPage(p) {
+    const n = Math.max(1, Math.min(totalPages, Number(p)));
+    setPage(n);
+  }
+
+  function fmtRefresh(d) {
+    if (!d) return "";
+    const diff = Math.floor((Date.now() - d.getTime()) / 1000);
+    if (diff < 60)  return "now";
+    if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
 
   // ── Saved Reports ──────────────────────────────────────────────────────
   const currentFilters = { days, projectKey, spaceMode, jqlText, currentOnly, keyFilter, fieldFilter, selectedUser, sortAsc };
@@ -317,9 +358,27 @@ export default function DashboardGadget() {
             <button className="icon-btn" onClick={() => { closeAll(); setShowRefresh(v => !v); }} title="Refresh settings">⚙</button>
             {showRefresh && <RefreshPop value={refreshInterval} onChange={setRefreshInterval} onClose={() => setShowRefresh(false)} />}
           </div>
+          <button className="icon-btn" onClick={() => { closeAll(); setShowSearch(v => !v); }} title="Search">🔍</button>
           <button className="icon-btn" onClick={load} disabled={loading} title="Refresh now">↺</button>
         </div>
       </div>
+
+      {/* ── Search bar (shown when 🔍 toggled) ── */}
+      {showSearch && (
+        <div className="gad-search-row">
+          <span className="srch-ico">&#128269;</span>
+          <input
+            className="gad-search-inp"
+            placeholder="Search key, updater, field, changes…"
+            value={gadSearch}
+            autoFocus
+            onChange={e => setGadSearch(e.target.value)}
+          />
+          {gadSearch && (
+            <button className="gad-search-clear" onClick={() => setGadSearch("")}>✕</button>
+          )}
+        </div>
+      )}
 
       {/* ── Filter row ── */}
       <div className="gad-filter-row">
@@ -491,7 +550,7 @@ export default function DashboardGadget() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r, i) => (
+              {pagedRows.map((r, i) => (
                 <tr key={i} className="gad-tr">
                   {visibleCols.has("date")    && <td className="gad-td gad-td-date">{fmtDate(r.timestamp)}</td>}
                   {visibleCols.has("key")     && <td className="gad-td"><a className="gad-key key-link" href={`/browse/${r.issueKey}`} onClick={e => { e.preventDefault(); router.open(`/browse/${r.issueKey}`); }}>{r.issueKey}</a></td>}
@@ -508,6 +567,39 @@ export default function DashboardGadget() {
             </tbody>
           </table>
           {loading && <div className="gad-loading-overlay">Refreshing...</div>}
+        </div>
+      )}
+
+      {/* ── Pagination footer ── */}
+      {rows.length > 0 && (
+        <div className="gad-pg-footer">
+          <span className="gad-pg-refresh">
+            &#8635; {lastRefresh ? fmtRefresh(lastRefresh) : ""}
+          </span>
+          <div className="gad-pg-controls">
+            <span className="gad-pg-label">Logs:</span>
+            <select
+              className="gad-pg-size"
+              value={pageSize}
+              onChange={e => { setPageSize(Number(e.target.value)); setPage(1); }}
+            >
+              {[10,25,50,100].map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+            <button className="gad-pg-nav" onClick={() => goToPage(safePage - 1)} disabled={safePage <= 1}>&#8249;</button>
+            <span className="gad-pg-num">{safePage}</span>
+            <button className="gad-pg-nav" onClick={() => goToPage(safePage + 1)} disabled={safePage >= totalPages}>&#8250;</button>
+            <input
+              className="gad-pg-jump"
+              type="number"
+              min="1"
+              max={totalPages}
+              placeholder="#"
+              value={pageInput}
+              onChange={e => setPageInput(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter") { goToPage(pageInput); setPageInput(""); } }}
+            />
+            <button className="gad-pg-go" onClick={() => { goToPage(pageInput); setPageInput(""); }}>Go &rsaquo;</button>
+          </div>
         </div>
       )}
     </div>

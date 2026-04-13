@@ -399,6 +399,27 @@
                        display:flex; align-items:center; justify-content:center;
                        font-size:12px; color:#42526E; pointer-events:none; }
 
+/* Gadget search bar */
+.gad-search-row    { display:flex; align-items:center; gap:6px; background:#FAFBFC; border:1px solid #DFE1E6; border-radius:3px; padding:4px 8px; margin-bottom:6px; }
+.gad-search-inp    { flex:1; border:none; background:transparent; outline:none; font-size:12px; color:#172B4D; padding:3px 0; }
+.gad-search-clear  { background:none; border:none; cursor:pointer; color:#6B778C; font-size:13px; padding:0 2px; line-height:1; }
+.gad-search-clear:hover { color:#DE350B; }
+
+/* Gadget pagination footer */
+.gad-pg-footer     { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; padding:8px 2px 2px; font-size:12px; color:#5E6C84; border-top:1px solid #F4F5F7; margin-top:4px; }
+.gad-pg-refresh    { color:#6B778C; font-size:12px; }
+.gad-pg-controls   { display:flex; align-items:center; gap:6px; }
+.gad-pg-label      { color:#5E6C84; white-space:nowrap; }
+.gad-pg-size       { border:1px solid #DFE1E6; border-radius:3px; padding:3px 6px; font-size:12px; color:#172B4D; background:#FAFBFC; outline:none; cursor:pointer; }
+.gad-pg-nav        { background:#FAFBFC; border:1px solid #DFE1E6; border-radius:3px; width:26px; height:26px; font-size:16px; cursor:pointer; color:#42526E; line-height:1; display:flex; align-items:center; justify-content:center; }
+.gad-pg-nav:hover:not(:disabled) { background:#F4F5F7; border-color:#B3BAC5; }
+.gad-pg-nav:disabled { opacity:.4; cursor:not-allowed; }
+.gad-pg-num        { min-width:22px; text-align:center; font-weight:600; color:#172B4D; font-size:13px; background:#DEEBFF; border-radius:3px; padding:2px 6px; }
+.gad-pg-jump       { width:44px; border:1px solid #DFE1E6; border-radius:3px; padding:3px 5px; font-size:12px; text-align:center; outline:none; color:#172B4D; }
+.gad-pg-jump:focus { border-color:#0052CC; }
+.gad-pg-go         { background:#FAFBFC; border:1px solid #DFE1E6; border-radius:3px; padding:3px 8px; font-size:12px; cursor:pointer; color:#42526E; }
+.gad-pg-go:hover   { background:#F4F5F7; border-color:#B3BAC5; }
+
 .bar-count {
   font-size: 12px;
   color: #172B4D;
