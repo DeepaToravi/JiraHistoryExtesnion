@@ -1447,9 +1447,13 @@ function ProjectActivityApp() {
             currentFilters={currentFilters}
             viewType="project"
             onLoad={handleLoadReport}
+            portalId="proj-sr-portal"
           />
         </div>
       </div>
+      {/* Portal target: lives in document flow BELOW the filter bar so the
+          SavedReports panel is never clipped by the Forge iframe boundary */}
+      <div id="proj-sr-portal"></div>
 
       {loading && (
         <div className="state-box">

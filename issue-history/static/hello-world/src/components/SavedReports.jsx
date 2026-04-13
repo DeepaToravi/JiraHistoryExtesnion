@@ -1,4 +1,5 @@
 import React from "react";
+import ReactDOM from "react-dom";
 import { invoke } from "@forge/bridge";
 
 // ── SavedReports ─────────────────────────────────────────────────────────
@@ -12,7 +13,7 @@ import { invoke } from "@forge/bridge";
 //   viewType        – string identifying the current view/mode
 //   onLoad(report)  – callback called with the saved report object when user clicks "Load"
 
-export default function SavedReports({ currentFilters, viewType, onLoad }) {
+export default function SavedReports({ currentFilters, viewType, onLoad, portalId }) {
   const [open,         setOpen]         = React.useState(false);
   const [tab,          setTab]          = React.useState("my");      // "my" | "shared"
   const [myReports,    setMyReports]    = React.useState([]);
@@ -22,7 +23,6 @@ export default function SavedReports({ currentFilters, viewType, onLoad }) {
   const [showSaveForm, setShowSaveForm] = React.useState(false);
   const [reportName,   setReportName]   = React.useState("");
   const [toast,        setToast]        = React.useState(null);
-  const [panelStyle,   setPanelStyle]   = React.useState({});
   const panelRef   = React.useRef(null);
   const triggerRef = React.useRef(null);
 
@@ -39,35 +39,7 @@ export default function SavedReports({ currentFilters, viewType, onLoad }) {
   }, [open]);
 
   function togglePanel() {
-    if (open) { setOpen(false); return; }
-    if (triggerRef.current) {
-      const rect        = triggerRef.current.getBoundingClientRect();
-      const PANEL_W     = 340;
-      const PANEL_MAX_H = 400;
-      const GAP         = 6;
-      const spaceBelow  = window.innerHeight - rect.bottom - GAP;
-      const spaceAbove  = rect.top - GAP;
-      const right       = window.innerWidth - rect.right;
-
-      if (spaceBelow >= 180) {
-        // enough room below — open downward, cap height to available space
-        setPanelStyle({
-          top:       rect.bottom + GAP,
-          right,
-          width:     PANEL_W,
-          maxHeight: Math.min(PANEL_MAX_H, spaceBelow),
-        });
-      } else {
-        // open upward, cap height to space above
-        setPanelStyle({
-          bottom:    window.innerHeight - rect.top + GAP,
-          right,
-          width:     PANEL_W,
-          maxHeight: Math.min(PANEL_MAX_H, spaceAbove),
-        });
-      }
-    }
-    setOpen(true);
+    setOpen(v => !v);
   }
 
   // Load reports when panel opens or tab changes
@@ -157,9 +129,12 @@ export default function SavedReports({ currentFilters, viewType, onLoad }) {
         {myReports.length > 0 && <span className="sr-badge">{myReports.length}</span>}
       </button>
 
-      {/* Panel — position:fixed, coordinates injected by togglePanel */}
-      {open && (
-        <div className="sr-panel" ref={panelRef} style={panelStyle}>
+      {/* Panel — portalled into a sibling div below the filter bar (project page)
+          so it is IN document flow → Forge iframe auto-expands → never clipped.
+          Falls back to position:absolute for all other contexts (issue, global, gadget). */}
+      {open && (() => {
+        const panelEl = (
+          <div className={portalId ? "sr-panel-inline" : "sr-panel"} ref={panelRef}>
           <div className="sr-panel-header">
             <span className="sr-panel-title">Reports</span>
             <button className="sr-panel-close" onClick={() => setOpen(false)}>&#10005;</button>
@@ -292,7 +267,10 @@ export default function SavedReports({ currentFilters, viewType, onLoad }) {
             </div>
           )}
         </div>
-      )}
+        );
+        const target = portalId ? document.getElementById(portalId) : null;
+        return target ? ReactDOM.createPortal(panelEl, target) : panelEl;
+      })()}
     </div>
   );
 }
