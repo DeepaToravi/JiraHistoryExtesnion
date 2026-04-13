@@ -1,5 +1,5 @@
 import React from "react";
-import { invoke } from "@forge/bridge";
+import { invoke, router } from "@forge/bridge";
 import SavedReports from "./SavedReports";
 
 /* ─── helpers ──────────────────────────────────────────────────────── */
@@ -494,7 +494,7 @@ export default function DashboardGadget() {
               {rows.map((r, i) => (
                 <tr key={i} className="gad-tr">
                   {visibleCols.has("date")    && <td className="gad-td gad-td-date">{fmtDate(r.timestamp)}</td>}
-                  {visibleCols.has("key")     && <td className="gad-td"><span className="gad-key">{r.issueKey}</span></td>}
+                  {visibleCols.has("key")     && <td className="gad-td"><a className="gad-key key-link" href={`/browse/${r.issueKey}`} onClick={e => { e.preventDefault(); router.open(`/browse/${r.issueKey}`); }}>{r.issueKey}</a></td>}
                   {visibleCols.has("updater") && (
                     <td className="gad-td">
                       <span className="av av-sm" style={{background:`hsl(${avatarHue(r.author)},55%,44%)`}}

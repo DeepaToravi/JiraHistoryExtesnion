@@ -6,7 +6,7 @@ import SavedReports from "./components/SavedReports";
 import AppPermissions from "./components/AppPermissions";
 import SecurityScanner from "./components/SecurityScanner";
 import React from "react";
-import { invoke, view as forgeView } from "@forge/bridge";
+import { invoke, view as forgeView, router } from "@forge/bridge";
 import "./App.css";
 
 const DATE_OPTS = [
@@ -1544,7 +1544,9 @@ function ProjectActivityApp() {
                     <td>
                       <a className="key-link"
                         href={`/browse/${r.issueKey}`}
-                        target="_blank" rel="noreferrer">{r.issueKey}</a>
+                        onClick={e => { e.preventDefault(); router.open(`/browse/${r.issueKey}`); }}>
+                        {r.issueKey}
+                      </a>
                     </td>
                     <td className="td-summary">{r.summary}</td>
                     <td>
@@ -3009,8 +3011,8 @@ function GlobalPageApp() {
                 <div className="s-head">
                   <strong>{r.author}</strong>
                   {r.field
-                    ? <span> {r.from && r.to ? "changed" : r.to ? "updated" : "cleared"} the <em>{r.field}</em> on <a className="key-link" href={`/browse/${r.issueKey}`} target="_blank" rel="noreferrer">{r.issueKey}</a></span>
-                    : <span> made a change on <a className="key-link" href={`/browse/${r.issueKey}`} target="_blank" rel="noreferrer">{r.issueKey}</a></span>}
+                    ? <span> {r.from && r.to ? "changed" : r.to ? "updated" : "cleared"} the <em>{r.field}</em> on <a className="key-link" href={`/browse/${r.issueKey}`} onClick={e => { e.preventDefault(); router.open(`/browse/${r.issueKey}`); }}>{r.issueKey}</a></span>
+                    : <span> made a change on <a className="key-link" href={`/browse/${r.issueKey}`} onClick={e => { e.preventDefault(); router.open(`/browse/${r.issueKey}`); }}>{r.issueKey}</a></span>}
                   <span className="s-when"> {fmtDate(r.timestamp)}</span>
                 </div>
                 {r.summary && <div style={{ fontSize:"0.82em", color:"#5E6C84", marginBottom:2 }}>{r.summary}</div>}
@@ -3113,7 +3115,7 @@ function GlobalPageApp() {
                       </td>
                       {visibleCols.has("date")        && <td className="td-date">{fmtDate(r.timestamp)}</td>}
                       {visibleCols.has("updater")     && <td><div className="user-cell"><Av name={r.author}/><span>{r.author}</span></div></td>}
-                      {visibleCols.has("key")         && <td><a className="key-link" href={`/browse/${r.issueKey}`} target="_blank" rel="noreferrer">{r.issueKey}</a></td>}
+                      {visibleCols.has("key")         && <td><a className="key-link" href={`/browse/${r.issueKey}`} onClick={e => { e.preventDefault(); router.open(`/browse/${r.issueKey}`); }}>{r.issueKey}</a></td>}
                       {visibleCols.has("issuetype")   && <td className="td-field">{group.issueType || "—"}</td>}
                       {visibleCols.has("summary")     && <td className="td-summary">{group.summary}</td>}
                       {visibleCols.has("priority")    && <td><GlPriorityBadge v={group.priority}/></td>}
