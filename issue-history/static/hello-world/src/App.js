@@ -226,74 +226,51 @@ function doCSV(rows, key) {
 }
 
 function doXLS(rows, key) {
-  const x = v => String(v || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const STATUS_COLORS = {
-    "done":"#E3FCEF","closed":"#E3FCEF","resolved":"#E3FCEF",
-    "inprogress":"#DEEBFF","in progress":"#DEEBFF",
-    "todo":"#F4F5F7","to do":"#F4F5F7",
-    "blocked":"#FFEBE6",
-  };
-  const PRI_COLORS = { highest:"#FFEBE6", high:"#FFEBE6", critical:"#FFEBE6", medium:"#FFFAE6", low:"#E3FCEF", lowest:"#E3FCEF" };
-  function fieldBg(field, from, to) {
-    if ((field||"").toLowerCase() === "status") return STATUS_COLORS[(to||"").toLowerCase()] || "#FFFFFF";
-    if ((field||"").toLowerCase() === "priority") return PRI_COLORS[(to||"").toLowerCase()] || "#FFFFFF";
-    if ((field||"").toLowerCase() === "comment") return "#EAE6FF";
-    return "#FFFFFF";
-  }
-  // Summary stats for a second sheet
+  const xe = v => String(v||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  const cell  = (v, sid) => `<Cell${sid ? ` ss:StyleID="${sid}"` : ""}><Data ss:Type="String">${xe(v)}</Data></Cell>`;
+  const ncell = (v, sid) => `<Cell${sid ? ` ss:StyleID="${sid}"` : ""}><Data ss:Type="Number">${Number(v)||0}</Data></Cell>`;
+  const row   = cells => `<Row>${cells}</Row>`;
+
   const userMap = {}, fieldMap = {};
   rows.forEach(r => {
-    userMap[r.author] = (userMap[r.author] || 0) + 1;
-    if (r.field) fieldMap[r.field] = (fieldMap[r.field] || 0) + 1;
+    userMap[r.author] = (userMap[r.author]||0)+1;
+    if (r.field) fieldMap[r.field] = (fieldMap[r.field]||0)+1;
   });
-  const topUsers  = Object.entries(userMap).sort((a,b)=>b[1]-a[1]).slice(0, 10);
-  const topFields = Object.entries(fieldMap).sort((a,b)=>b[1]-a[1]).slice(0, 10);
+  const topUsers  = Object.entries(userMap).sort((a,b)=>b[1]-a[1]).slice(0,10);
+  const topFields = Object.entries(fieldMap).sort((a,b)=>b[1]-a[1]).slice(0,10);
 
-  const detailRows = rows.map(r => {
-    const bg = fieldBg(r.field, r.from, r.to);
-    return `<tr style="background:${bg}">${[fmtDate(r.ts||r.timestamp), r.author, r.field, r.from, r.to].map(v => `<td style="border:1px solid #DFE1E6;padding:5px 8px">${x(v)}</td>`).join("")}</tr>`;
-  }).join("");
+  const historyRows = rows.map((r,i) =>
+    row([fmtDate(r.ts||r.timestamp), r.author, r.field, r.from, r.to]
+      .map(v => cell(v, i%2===1?"alt":null)).join(""))
+  ).join("\n    ");
 
-  const summaryRows = [
-    ...topUsers.map(([u,c]) => `<tr><td style="border:1px solid #DFE1E6;padding:5px 8px">User Activity</td><td style="border:1px solid #DFE1E6;padding:5px 8px">${x(u)}</td><td style="border:1px solid #DFE1E6;padding:5px 8px">${c} changes</td></tr>`),
-    ...topFields.map(([f,c]) => `<tr><td style="border:1px solid #DFE1E6;padding:5px 8px">Field</td><td style="border:1px solid #DFE1E6;padding:5px 8px">${x(f)}</td><td style="border:1px solid #DFE1E6;padding:5px 8px">${c} times</td></tr>`),
-  ].join("");
+  const summaryData = [
+    ...topUsers.map(([u,c])  => row(cell("User Activity")+cell(u)+ncell(c))),
+    ...topFields.map(([f,c]) => row(cell("Field")+cell(f)+ncell(c))),
+  ].join("\n    ");
 
-  const HEADER_STYLE = "background:#0052CC;color:#ffffff;font-weight:bold;padding:7px 10px;border:1px solid #0052CC;font-size:12px";
-  const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
-<head><meta charset="UTF-8">
-<!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets>
-  <x:ExcelWorksheet><x:Name>Change History</x:Name><x:WorksheetOptions><x:Selected/></x:WorksheetOptions></x:ExcelWorksheet>
-  <x:ExcelWorksheet><x:Name>Summary</x:Name></x:ExcelWorksheet>
-</x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->
-<style>
-  body{font-family:Calibri,Arial,sans-serif;font-size:11px}
-  table{border-collapse:collapse;margin-bottom:24px}
-  .sheet-title{font-size:14px;font-weight:bold;color:#172B4D;margin:12px 0 6px 0}
-</style></head>
-<body>
-<p class="sheet-title">&#128202; ${x(key || "Issue")} — Change History (${rows.length} records)</p>
-<table>
-  <thead><tr>
-    <th style="${HEADER_STYLE};width:130px">Date of Change</th>
-    <th style="${HEADER_STYLE};width:120px">Updated By</th>
-    <th style="${HEADER_STYLE};width:100px">Field</th>
-    <th style="${HEADER_STYLE};width:160px">From</th>
-    <th style="${HEADER_STYLE};width:160px">To</th>
-  </tr></thead>
-  <tbody>${detailRows}</tbody>
-</table>
-<p class="sheet-title">&#128200; Summary — Top Contributors &amp; Changed Fields</p>
-<table>
-  <thead><tr>
-    <th style="${HEADER_STYLE};width:120px">Category</th>
-    <th style="${HEADER_STYLE};width:180px">Name</th>
-    <th style="${HEADER_STYLE};width:100px">Count</th>
-  </tr></thead>
-  <tbody>${summaryRows}</tbody>
-</table>
-</body></html>`;
-  dlBlob(`${key || "history"}-advanced.xls`, "application/vnd.ms-excel", html);
+  const HDR_H = ["Date of Change","Updated By","Field","From","To"];
+  const HDR_S = ["Category","Name","Count"];
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+<Styles>
+  <Style ss:ID="hdr"><Font ss:Bold="1" ss:Color="#FFFFFF" ss:Size="11"/><Interior ss:Color="#0052CC" ss:Pattern="Solid"/></Style>
+  <Style ss:ID="alt"><Interior ss:Color="#F4F5F7" ss:Pattern="Solid"/></Style>
+</Styles>
+<Worksheet ss:Name="Change History">
+  <Table>
+    ${row(HDR_H.map(h=>cell(h,"hdr")).join(""))}
+    ${historyRows}
+  </Table>
+</Worksheet>
+<Worksheet ss:Name="Summary">
+  <Table>
+    ${row(HDR_S.map(h=>cell(h,"hdr")).join(""))}
+    ${summaryData}
+  </Table>
+</Worksheet>
+</Workbook>`;
+  dlBlob(`${key || "history"}-advanced.xls`, "application/vnd.ms-excel", xml);
 }
 
 function doPDF(rows, key) {
@@ -1224,10 +1201,10 @@ function ProjectActivityApp() {
     dlBlob(`${projectKey || "project"}-history.csv`, "text/csv;charset=utf-8;", "\uFEFF" + csv);
   }
   function doExportXLS() {
-    const x = v => String(v || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    const STATUS_COLORS = { "done":"#E3FCEF","closed":"#E3FCEF","resolved":"#E3FCEF","inprogress":"#DEEBFF","in progress":"#DEEBFF","todo":"#F4F5F7","to do":"#F4F5F7","blocked":"#FFEBE6" };
-    const PRI_COLORS = { highest:"#FFEBE6",high:"#FFEBE6",critical:"#FFEBE6",medium:"#FFFAE6",low:"#E3FCEF",lowest:"#E3FCEF" };
-    // Build user/key/sprint summary stats
+    const xe = v => String(v||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+    const cell  = (v, sid) => `<Cell${sid ? ` ss:StyleID="${sid}"` : ""}><Data ss:Type="String">${xe(v)}</Data></Cell>`;
+    const ncell = (v, sid) => `<Cell${sid ? ` ss:StyleID="${sid}"` : ""}><Data ss:Type="Number">${Number(v)||0}</Data></Cell>`;
+    const row   = cells => `<Row>${cells}</Row>`;
     const userMap={}, keyMap={}, sprintMap={};
     rows.forEach(r => {
       userMap[r.author] = (userMap[r.author]||0)+1;
@@ -1237,44 +1214,37 @@ function ProjectActivityApp() {
     const topUsers   = Object.entries(userMap).sort((a,b)=>b[1]-a[1]).slice(0,10);
     const topIssues  = Object.entries(keyMap).sort((a,b)=>b[1]-a[1]).slice(0,10);
     const topSprints = Object.entries(sprintMap).sort((a,b)=>b[1]-a[1]).slice(0,5);
-    const HEADER_STYLE = "background:#0052CC;color:#ffffff;font-weight:bold;padding:7px 10px;border:1px solid #0052CC;font-size:12px";
-    const detailRows = rows.map(r => {
-      const fieldLow = (r.field||"").toLowerCase();
-      let bg = "#FFFFFF";
-      if (fieldLow === "status")   bg = STATUS_COLORS[(r.to||"").toLowerCase()] || "#FFFFFF";
-      if (fieldLow === "priority") bg = PRI_COLORS[(r.to||"").toLowerCase()] || "#FFFFFF";
-      if (fieldLow === "comment")  bg = "#EAE6FF";
-      return `<tr style="background:${bg}">${[fmtDate(r.timestamp),r.issueKey,r.summary,r.author,r.field,r.from,r.to].map(v=>`<td style="border:1px solid #DFE1E6;padding:5px 8px">${x(v)}</td>`).join("")}</tr>`;
-    }).join("");
-    const summaryRows = [
-      ...topUsers.map(([u,c]) => `<tr><td style="border:1px solid #DFE1E6;padding:5px 8px">User</td><td style="border:1px solid #DFE1E6;padding:5px 8px">${x(u)}</td><td style="border:1px solid #DFE1E6;padding:5px 8px">${c}</td></tr>`),
-      ...topIssues.map(([k,c]) => `<tr><td style="border:1px solid #DFE1E6;padding:5px 8px">Issue</td><td style="border:1px solid #DFE1E6;padding:5px 8px">${x(k)}</td><td style="border:1px solid #DFE1E6;padding:5px 8px">${c}</td></tr>`),
-      ...topSprints.map(([s,c]) => `<tr><td style="border:1px solid #DFE1E6;padding:5px 8px">Sprint</td><td style="border:1px solid #DFE1E6;padding:5px 8px">${x(s)}</td><td style="border:1px solid #DFE1E6;padding:5px 8px">${c}</td></tr>`),
-    ].join("");
-    const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
-<head><meta charset="UTF-8">
-<!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets>
-  <x:ExcelWorksheet><x:Name>Activity</x:Name><x:WorksheetOptions><x:Selected/></x:WorksheetOptions></x:ExcelWorksheet>
-  <x:ExcelWorksheet><x:Name>Summary</x:Name></x:ExcelWorksheet>
-</x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->
-<style>body{font-family:Calibri,Arial,sans-serif;font-size:11px}table{border-collapse:collapse;margin-bottom:24px}.sheet-title{font-size:14px;font-weight:bold;color:#172B4D;margin:12px 0 6px}</style></head>
-<body>
-<p class="sheet-title">&#128202; ${x(projectKey||"Project")} — Activity Report (${rows.length} changes)</p>
-<table>
-  <thead><tr>
-    <th style="${HEADER_STYLE};width:130px">Date</th><th style="${HEADER_STYLE};width:70px">Key</th>
-    <th style="${HEADER_STYLE};width:160px">Summary</th><th style="${HEADER_STYLE};width:120px">Author</th>
-    <th style="${HEADER_STYLE};width:100px">Field</th><th style="${HEADER_STYLE};width:130px">From</th>
-    <th style="${HEADER_STYLE};width:130px">To</th>
-  </tr></thead><tbody>${detailRows}</tbody>
-</table>
-<p class="sheet-title">&#128200; Summary</p>
-<table>
-  <thead><tr><th style="${HEADER_STYLE};width:80px">Category</th><th style="${HEADER_STYLE};width:180px">Name</th><th style="${HEADER_STYLE};width:80px">Changes</th></tr></thead>
-  <tbody>${summaryRows}</tbody>
-</table>
-</body></html>`;
-    dlBlob(`${projectKey||"project"}-advanced.xls`, "application/vnd.ms-excel", html);
+    const historyRows = rows.map((r,i) =>
+      row([fmtDate(r.timestamp),r.issueKey,r.summary,r.author,r.field,r.from,r.to]
+        .map(v=>cell(v,i%2===1?"alt":null)).join(""))
+    ).join("\n    ");
+    const summaryData = [
+      ...topUsers.map(([u,c])   => row(cell("User")+cell(u)+ncell(c))),
+      ...topIssues.map(([k,c])  => row(cell("Issue")+cell(k)+ncell(c))),
+      ...topSprints.map(([s,c]) => row(cell("Sprint")+cell(s)+ncell(c))),
+    ].join("\n    ");
+    const HDR_A = ["Date","Key","Summary","Author","Field","From","To"];
+    const HDR_S = ["Category","Name","Changes"];
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+<Styles>
+  <Style ss:ID="hdr"><Font ss:Bold="1" ss:Color="#FFFFFF" ss:Size="11"/><Interior ss:Color="#0052CC" ss:Pattern="Solid"/></Style>
+  <Style ss:ID="alt"><Interior ss:Color="#F4F5F7" ss:Pattern="Solid"/></Style>
+</Styles>
+<Worksheet ss:Name="Activity">
+  <Table>
+    ${row(HDR_A.map(h=>cell(h,"hdr")).join(""))}
+    ${historyRows}
+  </Table>
+</Worksheet>
+<Worksheet ss:Name="Summary">
+  <Table>
+    ${row(HDR_S.map(h=>cell(h,"hdr")).join(""))}
+    ${summaryData}
+  </Table>
+</Worksheet>
+</Workbook>`;
+    dlBlob(`${projectKey||"project"}-advanced.xls`, "application/vnd.ms-excel", xml);
   }
 
   // ── Permission enforcement flags (null perms = not yet loaded → default allow) ──
@@ -2526,9 +2496,10 @@ function GlobalPageApp() {
     dlBlob("issue-history.csv","text/csv;charset=utf-8;","\uFEFF"+csv);
   }
   function doExportXLS() {
-    const x = v => String(v||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-    const STATUS_COLORS = {"done":"#E3FCEF","closed":"#E3FCEF","resolved":"#E3FCEF","inprogress":"#DEEBFF","in progress":"#DEEBFF","todo":"#F4F5F7","to do":"#F4F5F7","blocked":"#FFEBE6"};
-    const PRI_COLORS = {highest:"#FFEBE6",high:"#FFEBE6",critical:"#FFEBE6",medium:"#FFFAE6",low:"#E3FCEF",lowest:"#E3FCEF"};
+    const xe = v => String(v||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+    const cell  = (v, sid) => `<Cell${sid ? ` ss:StyleID="${sid}"` : ""}><Data ss:Type="String">${xe(v)}</Data></Cell>`;
+    const ncell = (v, sid) => `<Cell${sid ? ` ss:StyleID="${sid}"` : ""}><Data ss:Type="Number">${Number(v)||0}</Data></Cell>`;
+    const row   = cells => `<Row>${cells}</Row>`;
     const userMap={}, projMap={}, fieldMap={};
     filteredRows.forEach(r => {
       userMap[r.author] = (userMap[r.author]||0)+1;
@@ -2538,44 +2509,37 @@ function GlobalPageApp() {
     const topUsers  = Object.entries(userMap).sort((a,b)=>b[1]-a[1]).slice(0,10);
     const topProjs  = Object.entries(projMap).sort((a,b)=>b[1]-a[1]).slice(0,10);
     const topFields = Object.entries(fieldMap).sort((a,b)=>b[1]-a[1]).slice(0,10);
-    const HEADER_STYLE = "background:#0052CC;color:#fff;font-weight:bold;padding:7px 10px;border:1px solid #0052CC;font-size:12px";
-    const detailRows = filteredRows.map(r => {
-      const statusBg = STATUS_COLORS[(r.status||"").toLowerCase()]||"#FFFFFF";
-      const priBg    = PRI_COLORS[(r.priority||"").toLowerCase()]||"#FFFFFF";
-      const fieldBg  = (r.field||"").toLowerCase()==="comment"?"#EAE6FF":"#FFFFFF";
-      const rowBg    = fieldBg !== "#FFFFFF" ? fieldBg : statusBg !== "#FFFFFF" ? statusBg : "#FFFFFF";
-      return `<tr style="background:${rowBg}">${[fmtDate(r.timestamp),r.issueKey,r.issueType,r.summary,r.priority,r.status,r.author,r.field,r.from,r.to].map(v=>`<td style="border:1px solid #DFE1E6;padding:5px 8px">${x(v)}</td>`).join("")}</tr>`;
-    }).join("");
-    const summaryRows = [
-      ...topUsers.map(([u,c])=>`<tr><td style="border:1px solid #DFE1E6;padding:5px 8px">User</td><td style="border:1px solid #DFE1E6;padding:5px 8px">${x(u)}</td><td style="border:1px solid #DFE1E6;padding:5px 8px">${c}</td></tr>`),
-      ...topProjs.map(([p,c])=>`<tr><td style="border:1px solid #DFE1E6;padding:5px 8px">Project</td><td style="border:1px solid #DFE1E6;padding:5px 8px">${x(p)}</td><td style="border:1px solid #DFE1E6;padding:5px 8px">${c}</td></tr>`),
-      ...topFields.map(([f,c])=>`<tr><td style="border:1px solid #DFE1E6;padding:5px 8px">Field</td><td style="border:1px solid #DFE1E6;padding:5px 8px">${x(f)}</td><td style="border:1px solid #DFE1E6;padding:5px 8px">${c}</td></tr>`),
-    ].join("");
-    const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
-<head><meta charset="UTF-8">
-<!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets>
-  <x:ExcelWorksheet><x:Name>History</x:Name><x:WorksheetOptions><x:Selected/></x:WorksheetOptions></x:ExcelWorksheet>
-  <x:ExcelWorksheet><x:Name>Summary</x:Name></x:ExcelWorksheet>
-</x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->
-<style>body{font-family:Calibri,Arial,sans-serif;font-size:11px}table{border-collapse:collapse;margin-bottom:24px}.sheet-title{font-size:14px;font-weight:bold;color:#172B4D;margin:12px 0 6px}</style></head>
-<body>
-<p class="sheet-title">&#128202; Issue Tracker — Advanced Report (${filteredRows.length} changes)</p>
-<table>
-  <thead><tr>
-    <th style="${HEADER_STYLE};width:130px">Date</th><th style="${HEADER_STYLE};width:70px">Key</th>
-    <th style="${HEADER_STYLE};width:90px">Type</th><th style="${HEADER_STYLE};width:160px">Summary</th>
-    <th style="${HEADER_STYLE};width:80px">Priority</th><th style="${HEADER_STYLE};width:80px">Status</th>
-    <th style="${HEADER_STYLE};width:120px">Updated By</th><th style="${HEADER_STYLE};width:100px">Field</th>
-    <th style="${HEADER_STYLE};width:130px">From</th><th style="${HEADER_STYLE};width:130px">To</th>
-  </tr></thead><tbody>${detailRows}</tbody>
-</table>
-<p class="sheet-title">&#128200; Summary</p>
-<table>
-  <thead><tr><th style="${HEADER_STYLE};width:80px">Category</th><th style="${HEADER_STYLE};width:180px">Name</th><th style="${HEADER_STYLE};width:80px">Changes</th></tr></thead>
-  <tbody>${summaryRows}</tbody>
-</table>
-</body></html>`;
-    dlBlob("issue-history-advanced.xls","application/vnd.ms-excel",html);
+    const historyRows = filteredRows.map((r,i) =>
+      row([fmtDate(r.timestamp),r.issueKey,r.issueType,r.summary,r.priority,r.status,r.author,r.field,r.from,r.to]
+        .map(v=>cell(v,i%2===1?"alt":null)).join(""))
+    ).join("\n    ");
+    const summaryData = [
+      ...topUsers.map(([u,c])  => row(cell("User")+cell(u)+ncell(c))),
+      ...topProjs.map(([p,c])  => row(cell("Project")+cell(p)+ncell(c))),
+      ...topFields.map(([f,c]) => row(cell("Field")+cell(f)+ncell(c))),
+    ].join("\n    ");
+    const HDR_H = ["Date","Key","Type","Summary","Priority","Status","Updated By","Field","From","To"];
+    const HDR_S = ["Category","Name","Changes"];
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+<Styles>
+  <Style ss:ID="hdr"><Font ss:Bold="1" ss:Color="#FFFFFF" ss:Size="11"/><Interior ss:Color="#0052CC" ss:Pattern="Solid"/></Style>
+  <Style ss:ID="alt"><Interior ss:Color="#F4F5F7" ss:Pattern="Solid"/></Style>
+</Styles>
+<Worksheet ss:Name="History">
+  <Table>
+    ${row(HDR_H.map(h=>cell(h,"hdr")).join(""))}
+    ${historyRows}
+  </Table>
+</Worksheet>
+<Worksheet ss:Name="Summary">
+  <Table>
+    ${row(HDR_S.map(h=>cell(h,"hdr")).join(""))}
+    ${summaryData}
+  </Table>
+</Worksheet>
+</Workbook>`;
+    dlBlob("issue-history-advanced.xls","application/vnd.ms-excel",xml);
   }
 
   const modeLabel = GL_SELECT_MODES.find(m => m.value === selectMode)?.label || "Space";
