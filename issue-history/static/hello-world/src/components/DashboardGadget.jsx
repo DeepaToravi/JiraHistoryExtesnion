@@ -272,13 +272,21 @@ export default function DashboardGadget() {
     if (selectedUser)            r = r.filter(x => x.author === selectedUser);
     if (gadSearch.trim()) {
       const q = gadSearch.trim().toLowerCase();
+      // Safe string conversion handles numbers, nulls, undefined from backend
+      const s = v => (v == null ? "" : String(v)).toLowerCase();
       r = r.filter(x =>
-        (x.issueKey||"").toLowerCase().includes(q) ||
-        (x.author||"").toLowerCase().includes(q)   ||
-        (x.field||"").toLowerCase().includes(q)    ||
-        (x.summary||"").toLowerCase().includes(q)  ||
-        (x.from||"").toLowerCase().includes(q)     ||
-        (x.to||"").toLowerCase().includes(q)
+        s(x.issueKey).includes(q)   ||
+        s(x.author).includes(q)     ||
+        s(x.field).includes(q)      ||
+        s(x.summary).includes(q)    ||
+        s(x.from).includes(q)       ||
+        s(x.to).includes(q)         ||
+        s(x.issueType).includes(q)  ||
+        s(x.status).includes(q)     ||
+        s(x.priority).includes(q)   ||
+        s(x.sprint).includes(q)     ||
+        s(x.assignee).includes(q)   ||
+        fmtDate(x.timestamp).toLowerCase().includes(q)
       );
     }
     if (sortAsc) r = [...r].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
@@ -350,7 +358,12 @@ export default function DashboardGadget() {
 
       {/* ── Top bar ── */}
       <div className="gad-top-bar">
-        <span className="gad-count">{rows.length} change{rows.length !== 1 ? "s" : ""}</span>
+        <span className="gad-count">
+          {gadSearch.trim()
+            ? <>{rows.length} <span style={{fontWeight:400,color:"#5E6C84"}}>of {history.length}</span> change{history.length !== 1 ? "s" : ""}</>
+            : <>{rows.length} change{rows.length !== 1 ? "s" : ""}</>
+          }
+        </span>
         <div className="gad-top-acts">
           <button className="gad-btn-export" onClick={exportCSV} title="Export CSV">↧ Export</button>
           <SavedReports currentFilters={currentFilters} viewType="gadget" onLoad={handleLoadReport} />
@@ -492,7 +505,11 @@ export default function DashboardGadget() {
 
       {/* ── Table ── */}
       {rows.length === 0 && !loading ? (
-        <div className="gad-empty-state">No changes found for the selected filters.</div>
+        <div className="gad-empty-state">
+          {gadSearch.trim()
+            ? <>No results for <strong>&ldquo;{gadSearch}&rdquo;</strong>. Try a different keyword.</>
+            : "No changes found for the selected filters."}
+        </div>
       ) : (
         <div className="gad-table-wrap">
           <table className="gad-table">
