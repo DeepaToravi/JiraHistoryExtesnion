@@ -1790,6 +1790,179 @@ resolver.define('shareViaEmailComment', async (req) => {
   }
 });
 
+// ── Deleted Attachment resolvers ──────────────────────────────────────────────
+// KVS key schema: deleted-att:{projectKey}:{issueKey}:{attachmentId}
+// Binary content (if ≤280 KB) is stored as base64 in the record.
+// On restore the content is re-uploaded via the Jira attachments API.
+
+resolver.define('fetchDeletedAttachments', async (req) => {
+  const projectKey = req.context?.extension?.project?.key || req.payload?.projectKey;
+  const issueKey   = req.payload?.issueKey;
+
+  let isAdmin = false;
+  const isAll = !projectKey || projectKey === 'all';
+  if (!isAll) {
+    try {
+      const permResp = await api.asUser().requestJira(
+        route`/rest/api/3/mypermissions?projectKey=${projectKey}&permissions=ADMINISTER_PROJECTS`
+      );
+      const perms = await permResp.json();
+      isAdmin = perms?.permissions?.ADMINISTER_PROJECTS?.havePermission === true;
+    } catch (_) {}
+  } else {
+    isAdmin = true;
+  }
+
+  try {
+    let prefix;
+    if (issueKey) {
+      const pk = issueKey.split('-')[0];
+      prefix = `deleted-att:${pk}:${issueKey}:`;
+    } else if (!isAll) {
+      prefix = `deleted-att:${projectKey}:`;
+    } else {
+      prefix = 'deleted-att:';
+    }
+
+    const result = await kvs.query()
+      .where('key', WhereConditions.beginsWith(prefix))
+      .getMany();
+
+    // Strip base64 from list response to keep payload size small
+    const attachments = (result.results || [])
+      .map(r => r.value)
+      .filter(Boolean)
+      .map(a => {
+        const { base64Content, ...rest } = a;
+        return {
+          ...rest,
+          contentCached: a.contentCached || false,
+          _recordKey: `deleted-att:${a.projectKey}:${a.issueKey}:${a.id}`,
+        };
+      });
+
+    attachments.sort((a, b) => new Date(b.deletedAt) - new Date(a.deletedAt));
+    return { attachments, total: attachments.length, isAdmin };
+  } catch (e) {
+    console.error('fetchDeletedAttachments error:', e);
+    return { attachments: [], error: e.message, isAdmin };
+  }
+});
+
+resolver.define('restoreDeletedAttachment', async (req) => {
+  const { recordKey, targetIssueKey } = req.payload || {};
+  if (!recordKey) return { success: false, error: 'No recordKey provided' };
+
+  // Derive projectKey from the record key: deleted-att:{pk}:{ik}:{id}
+  const parts = recordKey.split(':');
+  const projectKey = parts[1] || '';
+  const issueKey   = targetIssueKey || parts[2] || '';
+
+  if (!issueKey) return { success: false, error: 'No target issue key provided' };
+
+  let isAdmin = false;
+  if (projectKey) {
+    try {
+      const permResp = await api.asUser().requestJira(
+        route`/rest/api/3/mypermissions?projectKey=${projectKey}&permissions=ADMINISTER_PROJECTS`
+      );
+      const perms = await permResp.json();
+      isAdmin = perms?.permissions?.ADMINISTER_PROJECTS?.havePermission === true;
+    } catch (_) {}
+  }
+
+  if (!isAdmin) return { success: false, error: 'Only project admins can restore attachments' };
+
+  const record = await kvs.get(recordKey).catch(() => null);
+  if (!record) return { success: false, error: 'Deleted attachment record not found — it may have already been restored or purged.' };
+
+  // Content lives in att-cache: (referenced by cacheKey) — fetch it separately
+  let base64Content = null;
+  if (record.contentCached && record.cacheKey) {
+    const cached = await kvs.get(record.cacheKey).catch(() => null);
+    base64Content = cached?.base64Content || null;
+  }
+
+  if (!record.contentCached || !base64Content) {
+    const maxKB = Math.round(280_000 / 1024);
+    return {
+      success: false,
+      error: `"${record.filename || 'File'}" was larger than ${maxKB} KB when it was deleted and could not be cached. It cannot be automatically restored — please re-upload it manually.`,
+    };
+  }
+
+  try {
+    const buffer = Buffer.from(base64Content, 'base64');
+    const blob   = new Blob([buffer], { type: record.mimeType || 'application/octet-stream' });
+    const form   = new FormData();
+    form.append('file', blob, record.filename || 'restored-attachment');
+
+    const uploadResp = await api.asUser().requestJira(
+      route`/rest/api/3/issue/${issueKey}/attachments`,
+      {
+        method:  'POST',
+        headers: { 'X-Atlassian-Token': 'no-check' },
+        body:    form,
+      }
+    );
+
+    if (uploadResp.status === 200) {
+      // Clean up both the deleted-att record and the att-cache entry
+      await Promise.all([
+        kvs.delete(recordKey).catch(() => {}),
+        record.cacheKey ? kvs.delete(record.cacheKey).catch(() => {}) : Promise.resolve(),
+      ]);
+      console.log(`✅ Restored attachment "${record.filename}" on ${issueKey}`);
+      return { success: true, filename: record.filename };
+    }
+
+    let errMsg = `HTTP ${uploadResp.status}`;
+    try {
+      const errData = await uploadResp.json();
+      errMsg = JSON.stringify(errData.errors || errData.errorMessages || errData) || errMsg;
+    } catch (_) {}
+    return { success: false, error: errMsg };
+  } catch (e) {
+    console.error('restoreDeletedAttachment error:', e);
+    return { success: false, error: e.message };
+  }
+});
+
+resolver.define('purgeDeletedAttachment', async (req) => {
+  const { recordKey } = req.payload || {};
+  if (!recordKey) return { success: false, error: 'No recordKey provided' };
+
+  // Derive projectKey from key: deleted-att:{projectKey}:{issueKey}:{id}
+  const parts = recordKey.split(':');
+  const projectKey = parts[1] || '';
+
+  let isAdmin = false;
+  if (projectKey) {
+    try {
+      const permResp = await api.asUser().requestJira(
+        route`/rest/api/3/mypermissions?projectKey=${projectKey}&permissions=ADMINISTER_PROJECTS`
+      );
+      const perms = await permResp.json();
+      isAdmin = perms?.permissions?.ADMINISTER_PROJECTS?.havePermission === true;
+    } catch (_) {}
+  }
+
+  if (!isAdmin) return { success: false, error: 'Only project admins can purge attachment records' };
+
+  try {
+    // Also clean up the att-cache: entry that holds the base64 content
+    const record = await kvs.get(recordKey).catch(() => null);
+    await kvs.delete(recordKey);
+    if (record?.cacheKey) {
+      await kvs.delete(record.cacheKey).catch(() => {});
+    }
+    console.log(`🗑️ Purged deleted attachment record: ${recordKey}`);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
 export const handler = resolver.getDefinitions();
 export { issueCreated, issueUpdated, issueDeleted };
 

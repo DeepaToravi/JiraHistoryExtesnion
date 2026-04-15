@@ -2,6 +2,7 @@
 import { DynamicStatusChart } from "./components/Charts";
 import DashboardGadget from "./components/DashboardGadget";
 import DeletedIssues from "./components/DeletedIssues";
+import DeletedAttachments from "./components/DeletedAttachments";
 import SavedReports from "./components/SavedReports";
 import AppPermissions from "./components/AppPermissions";
 import SecurityScanner from "./components/SecurityScanner";
@@ -1045,7 +1046,7 @@ function ProjectActivityApp() {
   const [asc,    setAsc]    = React.useState(false);
   const [page,     setPage]     = React.useState(1);
   const [pageSize, setPageSize] = React.useState(100);
-  const [projView, setProjView] = React.useState("activity"); // "activity" | "deleted" | "settings"
+  const [projView, setProjView] = React.useState("activity"); // "activity" | "deleted" | "deleted-attachments" | "settings"
   const loadedAt = React.useRef(null);
   const [lastUpdated, setLastUpdated] = React.useState("");
   const [exportOpen, setExportOpen] = React.useState(false);
@@ -1330,11 +1331,23 @@ function ProjectActivityApp() {
             🗑️ Deleted Issues
           </button>
         )}
+        {canViewDeleted && (
+          <button
+            className={`proj-tab${projView === "deleted-attachments" ? " proj-tab-on" : ""}`}
+            onClick={() => setProjView("deleted-attachments")}>
+            📎 Deleted Attachments
+          </button>
+        )}
       </div>
 
       {/* ── Deleted Issues view ── */}
       {projView === "deleted" && (
         <DeletedIssues projectKey={projectKey} />
+      )}
+
+      {/* ── Deleted Attachments view ── */}
+      {projView === "deleted-attachments" && (
+        <DeletedAttachments projectKey={projectKey} />
       )}
 
       {/* ── Activity view ── */}
