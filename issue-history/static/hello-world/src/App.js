@@ -1,4 +1,5 @@
 ﻿import AnalyticsDashboard from "./components/AnalyticsDashboard";
+import SprintHistory from "./components/SprintHistory";
 import { DynamicStatusChart } from "./components/Charts";
 import DashboardGadget from "./components/DashboardGadget";
 import DeletedIssues from "./components/DeletedIssues";
@@ -120,6 +121,8 @@ const NON_REVERTABLE_FIELDS = new Set([
   'worklog', 'worklogid', 'worklogtimespent', 'worklog time spent',
   'attachment',
   'comment',
+  // Sprint moves require Jira Software board operations — cannot be auto-reverted
+  'sprint', 'customfield_10020',
 ]);
 function isRevertable(fieldName) {
   if (!fieldName) return false;
@@ -146,6 +149,8 @@ const FIELD_DISPLAY_MAP = {
   'resolutiondate':          'Resolution Date',
   'epiclink':                'Epic Link',
   'epic link':               'Epic Link',
+  'sprint':                  'Sprint',
+  'customfield_10020':       'Sprint',
 };
 const LINK_FIELD_SYNONYMS = new Set(['link', 'links', 'linked issues', 'issuelinks', 'issue links']);
 function displayFieldName(field) {
@@ -175,6 +180,10 @@ function Val({ v, field, role }) {
   if (!v && v !== 0) return role === "from" ? <span className="cv-old">Unassigned</span> : <em className="nil">None</em>;
   if (field && /status/i.test(field)) {
     return <span className="status-badge" style={{ background: statusColor(v) }}>{v.toUpperCase()}</span>;
+  }
+  if (field && /^sprint$|^customfield_10020$/i.test(field)) {
+    const cls = role === "from" ? "sprint-badge sprint-badge-from" : "sprint-badge sprint-badge-to";
+    return <span className={cls}>{v}</span>;
   }
   if (role === "from") return <span className="cv-old">{v}</span>;
   if (role === "to")   return <span className="cv-new">{v}</span>;
@@ -597,6 +606,13 @@ function IssueActivityApp() {
   const hasFilter = dateF !== "any" || userF !== "any" || fieldF !== "any" || search;
   const clearAll  = () => { setDateF("any"); setCustomStart(""); setCustomEnd(""); setUserF("any"); setFieldF("any"); setSearch(""); setSelectedIds(new Set()); setPage(1); };
 
+  // Derive sprint-change rows directly from the full history (no extra API call needed)
+  const sprintRows = React.useMemo(
+    () => allRows.filter(r => r.field && /^sprint$|^customfield_10020$/i.test(r.field))
+           .sort((a, b) => new Date(b.ts) - new Date(a.ts)),
+    [allRows]
+  );
+
   const selectedChanges = React.useMemo(
     () => rows.filter(r => selectedIds.has(rowId(r))),
     [rows, selectedIds]
@@ -662,6 +678,7 @@ function IssueActivityApp() {
             <button className={`vt-btn${viewMode === "table"  ? " on" : ""}`} onClick={() => setViewMode("table")}  title="Table view">&#9776;</button>
             <button className={`vt-btn${viewMode === "stream" ? " on" : ""}`} onClick={() => setViewMode("stream")} title="Activity stream">&#931;&#931;</button>
             <button className={`vt-btn${viewMode === "dashboard" ? " on" : ""}`} onClick={() => setViewMode("dashboard")} title="Dashboard view">📊</button>
+            <button className={`vt-btn${viewMode === "sprint" ? " on" : ""}`} onClick={() => setViewMode("sprint")} title="Sprint history">🏃</button>
           </div>
           {!loading && <span className="cnt">{rows.length} change{rows.length !== 1 ? "s" : ""}</span>}
           {!loading && hasFilter && <button className="clr-btn" onClick={clearAll}>&#10005; Clear</button>}
@@ -851,7 +868,11 @@ function IssueActivityApp() {
   <AnalyticsDashboard rows={rows} isProject={false} />
 )}
 
-      {(perms === null || canViewHistory) && !loading && !error && rows.length > 0 && (
+      {(perms === null || canViewHistory) && !loading && !error && viewMode === "sprint" && (
+        <SprintHistory rows={sprintRows} issueKey={issueKey} />
+      )}
+
+      {(perms === null || canViewHistory) && !loading && !error && rows.length > 0 && viewMode !== "sprint" && (
         <div className="pg-footer">
           <span className="pg-updated">
             {lastUpdated ? `Last updated: ${lastUpdated}` : ""}

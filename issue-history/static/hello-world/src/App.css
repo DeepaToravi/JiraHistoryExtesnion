@@ -98,6 +98,33 @@
 .cdr-date{border:1px solid #DFE1E6;border-radius:3px;padding:4px 8px;font-size:12px;color:#172B4D;background:#fff;outline:none;width:100%}
 .cdr-date:focus{border-color:#0052CC;box-shadow:0 0 0 2px rgba(0,82,204,.2)}
 .cdr-apply{width:100%;margin-top:4px;padding:6px;font-size:12px}
+
+/* ── Sprint badge ─────────────────────────────────────────────────────── */
+.sprint-badge{display:inline-flex;align-items:center;padding:2px 10px;border-radius:11px;font-size:12px;font-weight:600;vertical-align:middle;white-space:nowrap}
+.sprint-badge-to{background:#E3FCEF;color:#006644}
+.sprint-badge-from{background:#F4F5F7;color:#42526E;text-decoration:line-through;opacity:.75}
+.sprint-badge-active{background:#DEEBFF;color:#0052CC}
+
+/* ── Sprint history panel ─────────────────────────────────────────────── */
+.sprint-history{padding:4px 0}
+.sprint-summary{display:flex;align-items:center;gap:12px;padding:10px 4px 12px;border-bottom:1px solid #F4F5F7;font-size:13px;flex-wrap:wrap}
+.sprint-stat{color:#5E6C84}.sprint-stat strong{color:#172B4D}
+.sprint-current-label{display:flex;align-items:center;gap:6px}
+.sprint-stat-divider{width:1px;height:14px;background:#DFE1E6;flex-shrink:0}
+.sprint-timeline{display:flex;flex-direction:column;padding-left:24px;border-left:2px solid #DFE1E6;margin-left:12px;margin-top:14px}
+.sprint-tl-entry{display:flex;align-items:flex-start;gap:10px;padding:10px 0 10px 16px;position:relative}
+.sprint-tl-entry::before{content:"";position:absolute;left:-8px;top:16px;width:12px;height:12px;border-radius:50%;background:#DFE1E6;border:2px solid #fff}
+.sprint-tl-entry-latest::before{background:#0052CC}
+.sprint-tl-body{flex:1}
+.sprint-tl-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:13px}
+.sprint-tl-author{color:#172B4D}
+.sprint-tl-verb{color:#5E6C84;font-size:12px}
+.sprint-tl-from-label{color:#97A0AF;font-size:12px}
+.sprint-tl-time{color:#97A0AF;font-size:12px;margin-left:4px;white-space:nowrap}
+.sprint-empty{display:flex;flex-direction:column;align-items:center;padding:36px 20px;gap:8px;color:#6B778C}
+.sprint-empty-ico{font-size:36px}
+.sprint-empty-msg{font-size:14px;font-weight:500;color:#42526E}
+.sprint-empty-sub{font-size:12px;color:#97A0AF;text-align:center;max-width:320px}
 /* Spacer that expands the iframe height when the date picker is open,
    ensuring "Custom range..." and its inputs are never clipped */
 .date-picker-spacer{height:520px;pointer-events:none;flex-shrink:0}

@@ -201,6 +201,24 @@ async function issueUpdated(event) {
   const projectKey = event.issue.key.split('-')[0];
   const issueKey   = event.issue.key;
 
+  // Detect sprint changes and persist dedicated sprint-change records for project-level querying
+  const sprintItems = (event.changelog?.items || []).filter(
+    it => it.field && it.field.toLowerCase() === 'sprint'
+  );
+  for (const item of sprintItems) {
+    // Use a combined timestamp + random suffix to avoid key collisions on rapid edits
+    const spKey = `sprint-change:${projectKey}:${issueKey}:${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    await kvs.set(spKey, {
+      issueKey,
+      projectKey,
+      fromSprint: item.fromString || null,
+      toSprint:   item.toString  || null,
+      author:     record.author,
+      timestamp:  record.timestamp,
+      type:       'sprint',
+    }).catch(e => console.error('sprint-change KVS write error:', e));
+  }
+
   // Detect and persist deleted-attachment records BEFORE refreshing the cache
   // (so the old cached content is still available during removal detection)
   await handleAttachmentRemovals(event);

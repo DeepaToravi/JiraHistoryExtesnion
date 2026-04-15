@@ -537,6 +537,27 @@ resolver.define('fetchGadgetHistory', async (req) => {
   };
 });
 
+// ── Sprint History resolver ────────────────────────────────────────────────
+// Returns all sprint-change KVS records for a project (or all projects).
+// Records are written by the issueUpdated event handler whenever an issue
+// is moved between sprints.
+
+resolver.define('fetchSprintHistory', async (req) => {
+  const projectKey = req.context?.extension?.project?.key || req.payload?.projectKey;
+  if (!projectKey) return { history: [], total: 0, error: 'No project key' };
+
+  try {
+    const prefix = projectKey === 'all' ? 'sprint-change:' : `sprint-change:${projectKey}:`;
+    const result = await kvs.query().where('key', WhereConditions.beginsWith(prefix)).getMany();
+    const history = (result.results || []).map(r => r.value).filter(Boolean);
+    history.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    return { history, total: history.length, projectKey };
+  } catch (e) {
+    console.error('fetchSprintHistory error:', e);
+    return { history: [], total: 0, error: e.message };
+  }
+});
+
 resolver.define('saveReport', async (req) => {
   const { name, filters, viewType } = req.payload;
   const userId = req.context.accountId;
