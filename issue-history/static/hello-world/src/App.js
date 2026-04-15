@@ -407,7 +407,7 @@ function FieldHeaderFilter({ opts, val, onChange }) {
   );
 }
 
-function DDMenu({ label, opts, val, onChange, alignRight, searchable }) {
+function DDMenu({ label, opts, val, onChange, alignRight, searchable, dropUp }) {
   const [open, setOpen] = React.useState(false);
   const [search, setSearch] = React.useState("");
   const ref = React.useRef(null);
@@ -430,7 +430,7 @@ function DDMenu({ label, opts, val, onChange, alignRight, searchable }) {
         <span className="dd-arrow">&#9660;</span>
       </button>
       {open && (
-        <ul className={`dd-list${alignRight ? " align-r" : ""}`}>
+        <ul className={`dd-list${alignRight ? " align-r" : ""}${dropUp ? " drop-up" : ""}`}>
           {searchable && (
             <li className="dd-search-item" onClick={e => e.stopPropagation()}>
               <input
@@ -880,7 +880,7 @@ function IssueActivityApp() {
           <div className="pg-controls">
             <span className="pg-label">Logs per page:</span>
             <DDMenu opts={PAGE_SIZE_OPTS} val={pageSize}
-              onChange={v => { setPageSize(Number(v)); setPage(1); }} alignRight />
+              onChange={v => { setPageSize(Number(v)); setPage(1); }} alignRight dropUp />
             <button className="pg-nav" disabled={page <= 1}
               onClick={() => setPage(p => p - 1)}>&#8249;</button>
             <span className="pg-num">{page}</span>
@@ -1575,7 +1575,7 @@ function ProjectActivityApp() {
           <div className="pg-controls">
             <span className="pg-label">Logs per page:</span>
             <DDMenu opts={PAGE_SIZE_OPTS} val={pageSize}
-              onChange={v => { setPageSize(Number(v)); setPage(1); }} alignRight />
+              onChange={v => { setPageSize(Number(v)); setPage(1); }} alignRight dropUp />
             <button className="pg-nav" disabled={page <= 1} onClick={() => setPage(p => p - 1)}>&#8249;</button>
             <span className="pg-num">{page}</span>
             <button className="pg-nav" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}>&#8250;</button>
@@ -2219,7 +2219,7 @@ function GlobalPageApp() {
   const [userSearch,    setUserSearch]    = React.useState("");
   const [exportOpen,    setExportOpen]    = React.useState(false);
   const [page,          setPage]          = React.useState(1);
-  const [pageSize,      setPageSize]      = React.useState(10);
+  const [pageSize,      setPageSize]      = React.useState(25);
   const [datePickerOpen,  setDatePickerOpen]  = React.useState(false);
   const [collapsedKeys,   setCollapsedKeys]   = React.useState(new Set());
   const [visibleCols,     setVisibleCols]     = React.useState(new Set(["date","updater","key","issuetype","summary","priority","status","field","changes"]));
@@ -2503,15 +2503,46 @@ function GlobalPageApp() {
     }));
   }, [filteredRows]);
 
-  const pagedItems  = viewMode === "table"
-    ? grouped.slice((page - 1) * pageSize, page * pageSize)
-    : filteredRows.slice((page - 1) * pageSize, page * pageSize);
-  const totalItems  = viewMode === "table" ? grouped.length : filteredRows.length;
-  const totalPages  = Math.max(1, Math.ceil(totalItems / pageSize));
+  // Always paginate by individual change-log rows so "10 per page" means 10 rows,
+  // regardless of how many issue groups those rows span.
+  const totalItems = filteredRows.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  const pagedRows  = filteredRows.slice((page - 1) * pageSize, page * pageSize);
 
-  const logsOnPage = viewMode === "table"
-    ? pagedItems.reduce((n, g) => n + (collapsedKeys.has(g.issueKey) ? 1 : g.rows.length), 0)
-    : pagedItems.length;
+  // For table view: re-group only the rows on this page
+  const pagedItems = viewMode === "table"
+    ? (() => {
+        const order = [], map = {};
+        pagedRows.forEach(r => {
+          if (!map[r.issueKey]) {
+            // Copy group-level metadata from the full grouped array
+            const g = grouped.find(x => x.issueKey === r.issueKey);
+            map[r.issueKey] = {
+              issueKey:    r.issueKey,
+              summary:     g?.summary     || r.summary     || "",
+              issueType:   g?.issueType   || r.issueType   || "",
+              priority:    g?.priority    || r.priority    || "",
+              status:      g?.status      || r.status      || "",
+              projectKey:  g?.projectKey  || r.projectKey  || "",
+              assignee:    g?.assignee    || r.assignee    || "",
+              reporter:    g?.reporter    || r.reporter    || "",
+              labels:      g?.labels      || r.labels      || "",
+              components:  g?.components  || r.components  || "",
+              fixVersions: g?.fixVersions || r.fixVersions || "",
+              resolution:  g?.resolution  || r.resolution  || "",
+              sprint:      g?.sprint      || r.sprint      || "",
+              extraFields: g?.extraFields || r.extraFields || {},
+              rows: [],
+            };
+            order.push(r.issueKey);
+          }
+          map[r.issueKey].rows.push(r);
+        });
+        return order.map(k => map[k]);
+      })()
+    : pagedRows;
+
+  const logsOnPage = pagedRows.length;
 
   const dateBtnLabel = React.useMemo(() => {
     if (dateF !== "custom") return DATE_OPTS.find(o => o.value === dateF)?.label || "Any dates";
@@ -2577,7 +2608,13 @@ function GlobalPageApp() {
   }
 
   const modeLabel = GL_SELECT_MODES.find(m => m.value === selectMode)?.label || "Space";
-  const PAGE_SIZE_OPTS = [{value:10,label:"10"},{value:25,label:"25"},{value:50,label:"50"},{value:100,label:"100"}];
+  const PAGE_SIZE_OPTS = [
+    {value:10, label:"10"},
+    {value:25, label:"25"},
+    {value:50, label:"50"},
+    {value:100,label:"100"},
+    {value:200,label:"200"},
+  ];
 
   // ── Secondary input based on current select mode ─────────────────────────
   function renderSecondaryInput() {
@@ -2721,10 +2758,11 @@ function GlobalPageApp() {
 
   // Rows visible on the current page — used for the page-level "select all" checkbox
   const glAllVisiblePageRows = React.useMemo(() => {
+    if (viewMode !== "table") return pagedRows;
     return pagedItems.flatMap(group =>
       collapsedKeys.has(group.issueKey) ? [group.rows[0]] : group.rows
     );
-  }, [pagedItems, collapsedKeys]);
+  }, [pagedItems, pagedRows, collapsedKeys, viewMode]);
 
   const glSelectedChanges = React.useMemo(
     () => glAllGroupedRows.filter(r => glSelectedIds.has(glRowId(r))),
@@ -3148,8 +3186,8 @@ function GlobalPageApp() {
             {lastUpdated ? " · " : ""}Logs on this page: {logsOnPage}
           </span>
           <div className="pg-controls">
-            <span className="pg-label">Work items per page:</span>
-            <DDMenu opts={PAGE_SIZE_OPTS} val={pageSize} onChange={v => { setPageSize(Number(v)); setPage(1); }} alignRight />
+            <span className="pg-label">Logs per page:</span>
+            <DDMenu opts={PAGE_SIZE_OPTS} val={pageSize} onChange={v => { setPageSize(Number(v)); setPage(1); }} alignRight dropUp />
             <button className="pg-nav" disabled={page<=1} onClick={() => setPage(p => p-1)}>&#8249;</button>
             <span className="pg-num">{page}</span>
             <button className="pg-nav" disabled={page>=totalPages} onClick={() => setPage(p => p+1)}>&#8250;</button>
