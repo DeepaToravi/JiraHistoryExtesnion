@@ -2133,9 +2133,12 @@ function ColPickerPanel({ visibleCols, setVisibleCols, fieldMeta }) {
   const allItems = React.useMemo(() => {
     const base  = BASE_COL_DEFS.map(c => ({ k: c.k, label: c.l, custom: false }));
     const extra = (fieldMeta || []).map(f => ({ k: f.id, label: f.name, custom: f.custom }));
-    // Deduplicate: skip extra entries whose id already exists in base keys
-    const baseKeys = new Set(BASE_COL_DEFS.map(c => c.k));
-    const deduped  = extra.filter(f => !baseKeys.has(f.k));
+     // Deduplicate: skip extra entries whose id OR label already matches a base column.
+    // Jira returns the built-in "Key" field with id "issuekey" (not "key"), so we must
+    // also check by label to prevent it appearing twice.
+    const baseKeys   = new Set(BASE_COL_DEFS.map(c => c.k));
+    const baseLabels = new Set(BASE_COL_DEFS.map(c => c.l.toLowerCase()));
+    const deduped  = extra.filter(f => !baseKeys.has(f.k) && !baseLabels.has((f.label || "").toLowerCase()));
     return [...base, ...deduped];
   }, [fieldMeta]);
 
@@ -2398,7 +2401,9 @@ function GlobalPageApp() {
       .then(res => {
         let hist = res.history || [];
         setProjects(res.projects || []);
-        setFieldMeta(res.fieldMeta || []);
+        // Filter out fields that cannot be meaningfully displayed in history
+        // (e.g. "Images" / "thumbnail" – binary/media fields with no text value).
+        setFieldMeta((res.fieldMeta || []).filter(f => f.name?.toLowerCase() !== "images"));
         if (keepDeleted) {
           invoke("fetchDeletedIssues", { projectKey: "all" }).then(dr => {
             const del = (dr.issues || []).map(iss => ({
@@ -2554,10 +2559,41 @@ function GlobalPageApp() {
   }, [dateF, customStart, customEnd]);
 
   function doExportCSV() {
-    const h = ["Date of change","Key","Issue Type","Summary","Priority","Status","Updated by","Field","From","To"];
+    // Ordered column definitions – matches the table column order exactly.
+    // "changes" expands to two separate columns (From, To) for spreadsheet clarity.
+    const COL_DEFS = [
+      { k:"date",        l:"Date of change",  v: r => fmtDate(r.timestamp) },
+      { k:"updater",     l:"Updated by",      v: r => r.author },
+      { k:"key",         l:"Key",             v: r => r.issueKey },
+      { k:"issuetype",   l:"Issue Type",      v: r => r.issueType },
+      { k:"summary",     l:"Summary",         v: r => r.summary },
+      { k:"priority",    l:"Priority",        v: r => r.priority },
+      { k:"status",      l:"Status",          v: r => r.status },
+      { k:"assignee",    l:"Assignee",        v: r => r.assignee },
+      { k:"reporter",    l:"Reporter",        v: r => r.reporter },
+      { k:"sprint",      l:"Sprint",          v: r => r.sprint },
+      { k:"labels",      l:"Labels",          v: r => r.labels },
+      { k:"components",  l:"Components",      v: r => r.components },
+      { k:"fixversions", l:"Fix Version",     v: r => r.fixVersions },
+      { k:"resolution",  l:"Resolution",      v: r => r.resolution },
+      { k:"project",     l:"Project",         v: r => r.projectKey },
+      { k:"field",       l:"Field",           v: r => r.field },
+      { k:"changes",     l:["From","To"],     v: r => [r.from, r.to], multi: true },
+    ];
+    const activeCols  = COL_DEFS.filter(c => visibleCols.has(c.k));
+    const dynamicCols = (fieldMeta || []).filter(f => visibleCols.has(f.id))
+                          .map(f => ({ l: f.name, v: r => r.extraFields?.[f.id] }));
     const q = v => `"${String(v||"").replace(/"/g,'""')}"`;
-    const csv = [h, ...filteredRows.map(r => [fmtDate(r.timestamp),r.issueKey,r.issueType,r.summary,r.priority,r.status,r.author,r.field,r.from,r.to])]
-      .map(row => row.map(q).join(",")).join("\r\n");
+    const headers = [];
+    activeCols.forEach(c => { if (c.multi) headers.push(...c.l); else headers.push(c.l); });
+    dynamicCols.forEach(c => headers.push(c.l));
+    const dataRows = filteredRows.map(r => {
+      const cells = [];
+      activeCols.forEach(c => { if (c.multi) { const vals = c.v(r); cells.push(...vals); } else cells.push(c.v(r)); });
+      dynamicCols.forEach(c => cells.push(c.v(r)));
+      return cells;
+    });
+    const csv = [headers, ...dataRows].map(row => row.map(q).join(",")).join("\r\n");
     dlBlob("issue-history.csv","text/csv;charset=utf-8;","\uFEFF"+csv);
   }
   function doExportXLS() {
@@ -2565,6 +2601,45 @@ function GlobalPageApp() {
     const cell  = (v, sid) => `<Cell${sid ? ` ss:StyleID="${sid}"` : ""}><Data ss:Type="String">${xe(v)}</Data></Cell>`;
     const ncell = (v, sid) => `<Cell${sid ? ` ss:StyleID="${sid}"` : ""}><Data ss:Type="Number">${Number(v)||0}</Data></Cell>`;
     const row   = cells => `<Row>${cells}</Row>`;
+    // Same column definitions as CSV – respects visibleCols selection
+    const COL_DEFS = [
+      { k:"date",        l:"Date of change",  v: r => fmtDate(r.timestamp) },
+      { k:"updater",     l:"Updated by",      v: r => r.author },
+      { k:"key",         l:"Key",             v: r => r.issueKey },
+      { k:"issuetype",   l:"Issue Type",      v: r => r.issueType },
+      { k:"summary",     l:"Summary",         v: r => r.summary },
+      { k:"priority",    l:"Priority",        v: r => r.priority },
+      { k:"status",      l:"Status",          v: r => r.status },
+      { k:"assignee",    l:"Assignee",        v: r => r.assignee },
+      { k:"reporter",    l:"Reporter",        v: r => r.reporter },
+      { k:"sprint",      l:"Sprint",          v: r => r.sprint },
+      { k:"labels",      l:"Labels",          v: r => r.labels },
+      { k:"components",  l:"Components",      v: r => r.components },
+      { k:"fixversions", l:"Fix Version",     v: r => r.fixVersions },
+      { k:"resolution",  l:"Resolution",      v: r => r.resolution },
+      { k:"project",     l:"Project",         v: r => r.projectKey },
+      { k:"field",       l:"Field",           v: r => r.field },
+      { k:"changes",     l:["From","To"],     v: r => [r.from, r.to], multi: true },
+    ];
+    const activeCols  = COL_DEFS.filter(c => visibleCols.has(c.k));
+    const dynamicCols = (fieldMeta || []).filter(f => visibleCols.has(f.id))
+                          .map(f => ({ l: f.name, v: r => r.extraFields?.[f.id] }));
+    // Build header label list
+    const hdrLabels = [];
+    activeCols.forEach(c => { if (c.multi) hdrLabels.push(...c.l); else hdrLabels.push(c.l); });
+    dynamicCols.forEach(c => hdrLabels.push(c.l));
+    // Build History sheet rows
+    const historyRows = filteredRows.map((r, i) => {
+      const sid = i % 2 === 1 ? "alt" : null;
+      const cells = [];
+      activeCols.forEach(c => {
+        if (c.multi) { const vals = c.v(r); vals.forEach(v => cells.push(cell(v, sid))); }
+        else cells.push(cell(c.v(r), sid));
+      });
+      dynamicCols.forEach(c => cells.push(cell(c.v(r), sid)));
+      return row(cells.join(""));
+    }).join("\n    ");
+    // Summary sheet – activity overview (unchanged)
     const userMap={}, projMap={}, fieldMap={};
     filteredRows.forEach(r => {
       userMap[r.author] = (userMap[r.author]||0)+1;
@@ -2574,16 +2649,11 @@ function GlobalPageApp() {
     const topUsers  = Object.entries(userMap).sort((a,b)=>b[1]-a[1]).slice(0,10);
     const topProjs  = Object.entries(projMap).sort((a,b)=>b[1]-a[1]).slice(0,10);
     const topFields = Object.entries(fieldMap).sort((a,b)=>b[1]-a[1]).slice(0,10);
-    const historyRows = filteredRows.map((r,i) =>
-      row([fmtDate(r.timestamp),r.issueKey,r.issueType,r.summary,r.priority,r.status,r.author,r.field,r.from,r.to]
-        .map(v=>cell(v,i%2===1?"alt":null)).join(""))
-    ).join("\n    ");
     const summaryData = [
       ...topUsers.map(([u,c])  => row(cell("User")+cell(u)+ncell(c))),
       ...topProjs.map(([p,c])  => row(cell("Project")+cell(p)+ncell(c))),
       ...topFields.map(([f,c]) => row(cell("Field")+cell(f)+ncell(c))),
     ].join("\n    ");
-    const HDR_H = ["Date","Key","Type","Summary","Priority","Status","Updated By","Field","From","To"];
     const HDR_S = ["Category","Name","Changes"];
     const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
@@ -2593,7 +2663,7 @@ function GlobalPageApp() {
 </Styles>
 <Worksheet ss:Name="History">
   <Table>
-    ${row(HDR_H.map(h=>cell(h,"hdr")).join(""))}
+    ${row(hdrLabels.map(h=>cell(h,"hdr")).join(""))}
     ${historyRows}
   </Table>
 </Worksheet>

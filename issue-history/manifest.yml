@@ -24,7 +24,7 @@ modules:
     - key: issue-history-dashboard-gadget
       title: Issue Tracker Gadget
       description: View recent issue activity, top users, and change stats across your projects
-      thumbnail: /thumbnail.svg
+      thumbnail: https://developer.atlassian.com/platform/forge/images/icons/issue-panel-icon.svg
       resource: main
       resolver:
         function: handler
